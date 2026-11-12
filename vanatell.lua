@@ -35,6 +35,7 @@ local LS_PERIOD = 60      -- seconds between linkshell reads
 local LS_GAP = 2          -- shortest time between two linkshells frames
 local LS_EQUIP_SETTLE = 1 -- wait after a linkshell equip packet before reading
 local LS_ZONE_SETTLE = 5  -- wait after zone-in or login, while the inventory loads
+local LS_INVENTORY_SETTLE = 0.5 -- wait after the inventory finished loading (0x01D)
 
 local PING = '{"type":"ping"}'
 local CA_FILE = windower.addon_path .. 'cacert.pem'
@@ -68,7 +69,7 @@ local app = {
     sent = nil,        -- what the last linkshells frame on this socket said
     sent_at = nil,     -- when it went
     pending = nil,     -- a change waiting for LS_GAP to pass
-    due = nil,         -- when the read an event asked for happens
+    due = {},          -- event kind -> when the read it asked for happens
     next_read = 0,     -- when the periodic read happens
   },
 }
@@ -290,7 +291,7 @@ end
 
 local function check_linkshells(t)
   local ls = app.ls
-  ls.due, ls.next_read = nil, t + LS_PERIOD
+  ls.next_read = t + LS_PERIOD
   local state = read_linkshells()
   if not state then return end
   ls.current = state
@@ -298,11 +299,11 @@ local function check_linkshells(t)
 end
 
 -- An event may have changed what is equipped. The game applies a packet
--- after its chunk handler runs, so the read waits; a later request pushes it
--- back rather than forward.
-local function check_linkshells_in(delay)
-  local ls, at = app.ls, now() + delay
-  if not ls.due or ls.due < at then ls.due = at end
+-- after its chunk handler runs, so the read waits. Each kind of event keeps
+-- one pending read, which a repeat pushes back rather than forward.
+local function check_linkshells_in(kind, delay)
+  local due, at = app.ls.due, now() + delay
+  if not due[kind] or due[kind] < at then due[kind] = at end
 end
 
 ---------------------------------------------------------------------------
@@ -638,8 +639,12 @@ windower.register_event('prerender', function()
       app.last_ping = t
     end
   end
-  local ls = app.ls
-  if (ls.due and t >= ls.due) or (not ls.due and t >= ls.next_read) then check_linkshells(t) end
+  -- An event's read, or the periodic one while no event read is pending.
+  local ls, read = app.ls, false
+  for kind, at in pairs(ls.due) do
+    if t >= at then ls.due[kind], read = nil, true end
+  end
+  if read or (next(ls.due) == nil and t >= ls.next_read) then check_linkshells(t) end
   if ls.pending and app.state == 'open' and t - ls.sent_at >= LS_GAP then send_linkshells(ls.pending, t) end
 end)
 
@@ -653,18 +658,21 @@ windower.register_event('incoming chunk', function(id, data)
   deliver(chat_frame(record.channel, 'in', record.sender, NULL, record.text))
 end)
 
--- Linkshell equip (0x0E0) and zone-in (0x00A, after which the inventory
--- reloads) ask for a read once the game has caught up.
+-- Linkshell equip (0x0E0), zone-in (0x00A, after which the inventory
+-- reloads) and inventory finished loading (0x01D) ask for a read once the
+-- game has caught up.
 windower.register_event('incoming chunk', function(id, data)
   if id == 0x0E0 then
-    if linkshells.note_equip(app.ls.equips, data) then check_linkshells_in(LS_EQUIP_SETTLE) end
+    if linkshells.note_equip(app.ls.equips, data) then check_linkshells_in('equip', LS_EQUIP_SETTLE) end
   elseif id == 0x00A then
-    check_linkshells_in(LS_ZONE_SETTLE)
+    check_linkshells_in('zone', LS_ZONE_SETTLE)
+  elseif id == 0x01D then
+    check_linkshells_in('inventory', LS_INVENTORY_SETTLE)
   end
 end)
 
 windower.register_event('login', function()
-  check_linkshells_in(LS_ZONE_SETTLE)
+  check_linkshells_in('zone', LS_ZONE_SETTLE)
 end)
 
 -- Another character may log in next, with other shells in other bag slots.

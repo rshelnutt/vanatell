@@ -229,4 +229,16 @@ T.test('an inventory that has not finished loading is unreadable: nothing is sen
   X.W.items = {[0] = {max = 80, count = 2, enabled = true, [1] = kupo(), [2] = mog()}}; X.tick(60)
   T.eq(#ls_sent(c), 2); T.eq(last_ls(c), {type = 'linkshells', ls1 = KUPO, ls2 = MOG})
 end)
+T.test('0x01D (inventory finished loading) is never blocked and asks for a read 0.5 s later, besides the zone-in read', function()
+  local X = boot{stored = PAIRED}; wear(X, 'KupoKnights', {[1] = kupo()}); local c = X.F.clients[1]; X.F.open(c)
+  X.W.fire('incoming chunk', 0x00A, P.zone_in()); X.W.items = {[0] = {max = 80, count = 0, enabled = true}}; X.tick(2)
+  X.W.items = {[0] = {max = 80, count = 2, enabled = true, [1] = kupo(), [2] = mog()}}
+  T.eq(X.W.fire('incoming chunk', 0x01D, P.inventory_finished()), nil)
+  X.tick(0.25); T.eq(#ls_sent(c), 1); X.tick(0.25); T.eq(#ls_sent(c), 2); T.eq(last_ls(c), {type = 'linkshells', ls1 = KUPO, ls2 = MOG})
+  X.W.items[0][2] = nil; X.tick(2); T.eq(#ls_sent(c), 2); X.tick(0.5); T.eq(#ls_sent(c), 3); T.eq(last_ls(c).ls2, nil)
+  X.W.fire('incoming chunk', 0x01D, P.inventory_finished()); X.tick(0.5); X.tick(5); T.eq(#ls_sent(c), 3)
+  -- A repeated 0x01D pushes its read back rather than forward.
+  X.W.fire('incoming chunk', 0x01D, P.inventory_finished()); X.tick(0.25); X.W.items[0][2] = mog()
+  X.W.fire('incoming chunk', 0x01D, P.inventory_finished()); X.tick(0.25); T.eq(#ls_sent(c), 3); X.tick(0.25); T.eq(#ls_sent(c), 4)
+end)
 T.done()

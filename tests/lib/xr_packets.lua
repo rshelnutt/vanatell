@@ -7,6 +7,7 @@
 --   P.outgoing_tell('Kupo', 'yo')       -- 0x0B6
 --   P.linkshell_equip(1, 5, 0)          -- 0x0E0
 --   P.zone_in()                         -- 0x00A
+--   P.inventory_finished()              -- 0x01D
 local P = {}
 
 local function name_field(name)
@@ -41,6 +42,11 @@ end
 -- Only the header matters to the addon: the body is zeros.
 function P.zone_in()
   return packet(0x00A, ('\0'):rep(16))
+end
+
+-- flag 1, 3 pad bytes
+function P.inventory_finished()
+  return packet(0x01D, string.char(1, 0, 0, 0))
 end
 
 return P
