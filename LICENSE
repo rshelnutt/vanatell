@@ -1,25 +1,35 @@
-Copyright (c) 2026, Rob Shelnutt
-All rights reserved.
+VanaTell Licence
 
-Redistribution and use in source and binary forms, with or without
-modification, are permitted provided that the following conditions are met:
+Copyright (c) 2026 Rob Shelnutt. All rights reserved.
 
-    * Redistributions of source code must retain the above copyright
-      notice, this list of conditions and the following disclaimer.
-    * Redistributions in binary form must reproduce the above copyright
-      notice, this list of conditions and the following disclaimer in the
-      documentation and/or other materials provided with the distribution.
-    * Neither the name of VanaTell nor the
-      names of its contributors may be used to endorse or promote products
-      derived from this software without specific prior written permission.
+VanaTell (the Windower addon, the VanaTell apps and the VanaTell relay) is
+proprietary software. It is licensed, not sold, and it is not open source.
+The source of the addon is published so that players can inspect what runs
+alongside their game; publication grants no rights beyond those below.
 
-THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
-ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
-WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
-DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
-FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
-(INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
-LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
-ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
-(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
-SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+You may:
+- download and run the addon, unmodified, with your own copies of Final
+  Fantasy XI and Windower, for your own play, together with the VanaTell
+  app and relay.
+
+You may not:
+- copy, redistribute, publish, sell, rent or sublicense the addon or any
+  part of it, in source or any other form;
+- modify it, or create derivative works from it, or remove this notice;
+- use it to build or operate a competing service, or run it against any
+  relay other than the one it is built for, except as its own commands
+  allow;
+- use it in breach of the terms of Final Fantasy XI or Windower.
+
+The owner may change these terms, add paid plans, or withdraw the addon or
+the service at any time.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHOR BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY ARISING FROM, OUT
+OF OR IN CONNECTION WITH THE SOFTWARE OR ITS USE.
+
+Third-party code: json.lua is rxi's json.lua under its own MIT licence, kept
+in that file. FINAL FANTASY is a registered trademark of Square Enix
+Holdings Co., Ltd.; VanaTell is not affiliated with Square Enix.

@@ -133,4 +133,4 @@ Each release is published on the [Releases](../../releases) page as `vanatell-vX
 
 ## Licence
 
-VanaTell is released under the BSD 3-Clause licence. See [LICENSE](LICENSE).
+VanaTell is proprietary software, licensed and not sold: you may run the addon for your own play, and nothing more. It is published so players can read what runs alongside their game. See [LICENSE](LICENSE).
