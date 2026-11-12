@@ -22,14 +22,23 @@ How a release is cut (no scripts needed):
 
 ## [Unreleased]
 
-### Changed
-- The trust-root bundle is trimmed to the roots the relay can chain to and renamed `relay-roots.txt`, so phones and PCs no longer offer to install it.
+## [0.1.1] - 2026-11-12
 
 ### Added
 
 - Party chat on your phone: every party line you receive or send is relayed
   to the VanaTell app, and a party line sent from the app is typed in game
   with `/p`. `//vt help` lists party among the relayed channels.
+- `//vt url default` goes back to the built-in relay after a custom one.
+
+### Changed
+
+- In-game messages are prefixed `VanaTell:`.
+- The built-in relay address is never printed; `//vt status` says
+  `relay: built-in` unless a custom relay is set.
+- The trust-root bundle is trimmed to the roots the relay can chain to and
+  renamed `relay-roots.txt`, so phones and PCs no longer offer to install it.
+- Auto-translate phrases are expanded to their text before relaying.
 
 ## [0.1.0] - 2026-11-12
 
@@ -48,5 +57,6 @@ How a release is cut (no scripts needed):
 - Case-insensitive pair codes: upper or lower case both work, and dashes or
   spaces copied from the phone are ignored.
 
-[Unreleased]: https://github.com/rshelnutt/vanatell/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/rshelnutt/vanatell/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/rshelnutt/vanatell/releases/tag/v0.1.1
 [0.1.0]: https://github.com/rshelnutt/vanatell/releases/tag/v0.1.0

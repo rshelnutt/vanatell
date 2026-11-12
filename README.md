@@ -77,7 +77,7 @@ To pair again later, open **Settings** in the app and tap **Generate new pairing
 `//vt status` prints, for example:
 
 ```
-VanaTell: version: 0.1.0
+VanaTell: version: 0.1.1
 VanaTell: relay: built-in
 VanaTell: paired: yes (account ...)
 VanaTell: enabled: yes
@@ -127,7 +127,7 @@ Everything travels over an encrypted connection, and the addon checks the relay'
 
 VanaTell follows [semantic versioning](https://semver.org). `//vt status` shows the version you have, and [CHANGELOG.md](CHANGELOG.md) lists what changed in each one. Until 1.0, 0.x releases may change behaviour between minor versions.
 
-Each release is published on the [Releases](../../releases) page as `vanatell-vX.Y.Z.zip`, for example `vanatell-v0.1.0.zip`. The zip holds exactly the `vanatell` addon folder: unzip it into `Windower4/addons/`.
+Each release is published on the [Releases](../../releases) page as `vanatell-vX.Y.Z.zip`, for example `vanatell-v0.1.1.zip`. The zip holds exactly the `vanatell` addon folder: unzip it into `Windower4/addons/`.
 
 ## Licence
 

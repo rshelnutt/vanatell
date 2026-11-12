@@ -34,7 +34,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 -- slots 1 and 2). All network work is pumped from prerender and never blocks.
 _addon.name = 'vanatell'
 _addon.command = 'vt'
-_addon.version = '0.1.0'
+_addon.version = '0.1.1'
 
 local config = require('config')
 
