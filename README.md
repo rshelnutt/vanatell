@@ -129,11 +129,6 @@ VanaTell follows [semantic versioning](https://semver.org). `//vt status` shows 
 
 Each release is published on the [Releases](../../releases) page as `vanatell-vX.Y.Z.zip`, for example `vanatell-v0.1.0.zip`. The zip holds exactly the `vanatell` addon folder: unzip it into `Windower4/addons/`.
 
-## Credits
-
-- `json.lua` by rxi, MIT licence, from `https://raw.githubusercontent.com/rxi/json.lua/v0.1.2/json.lua`.
-- `cacert.pem`, the Mozilla CA certificate bundle, MPL-2.0, via curl.se from `https://curl.se/ca/cacert.pem`.
-
 ## Licence
 
-VanaTell is released under the BSD 3-Clause licence, as most Windower addons are. See [LICENSE](LICENSE). `json.lua` keeps its MIT licence and `cacert.pem` its MPL-2.0 licence.
+VanaTell is released under the BSD 3-Clause licence. See [LICENSE](LICENSE).
