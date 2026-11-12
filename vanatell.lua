@@ -139,9 +139,18 @@ local function encode_fields(fields)
   return '{' .. table.concat(parts, ',') .. '}'
 end
 
+-- ls1 and ls2 frames name the shell the last linkshell read found in that
+-- slot, or null when it is not known; tell frames have no linkshell key.
+local function linkshell_name(channel)
+  if channel ~= 'ls1' and channel ~= 'ls2' then return nil end
+  local shell = app.ls.current and app.ls.current[channel]
+  return shell and shell.name or NULL
+end
+
 local function chat_frame(channel, direction, sender, target, text)
-  return encode_fields{{'type', 'chat'}, {'channel', channel}, {'direction', direction}, {'sender', sender},
-                       {'target', target}, {'text', text}, {'ts', math.floor(now() * 1000)}}
+  return encode_fields{{'type', 'chat'}, {'channel', channel}, {'linkshell', linkshell_name(channel)},
+                       {'direction', direction}, {'sender', sender}, {'target', target}, {'text', text},
+                       {'ts', math.floor(now() * 1000)}}
 end
 
 local function ack(client, id, ok, err)
