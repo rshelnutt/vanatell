@@ -26,20 +26,19 @@ Tells, LS1 and LS2 only.
 Until it is paired, loading it prints:
 
 ```
-vanatell: not paired: set the relay with //vt url wss://<host>, then //vt pair <code>
+vanatell: not paired: run //vt pair <code> with the code from the VanaTell app
 ```
 
 ## Pair
 
-1. Run `//vt url wss://your-relay.example.workers.dev`.
-   Use `wss://`. Plain `ws://` is accepted only for `localhost` and
-   `127.0.0.1`, for testing against a relay on the same PC.
-2. In the phone app, get a pairing code: in the Android app, open Settings
-   and tap "Generate new pairing code". A code works once, within 10 minutes.
-3. Run `//vt pair CODE`, with the 8 letters or digits from the phone in place
+1. In the VanaTell app, open Settings and tap "Generate new pairing code". A code
+   works once, within 10 minutes.
+2. Run `//vt pair CODE`, with the 8 letters or digits from the phone in place
    of `CODE`. The addon prints `paired (account ...)`, then
    `connected to relay`.
-4. Check with `//vt status`. It should show `connection: connected`.
+3. Check with `//vt status`. It should show `connection: connected`.
+
+The relay address is built in; there is nothing to configure.
 
 If relaying was turned off with `//vt off`, pairing prints
 `relay is off; //vt on to start`: run `//vt on` to connect.
@@ -47,11 +46,17 @@ If relaying was turned off with `//vt off`, pairing prints
 A new pairing code does not cut off the addon that is already paired. The
 relay revokes the old addon token only once the new code is used.
 
+### Running your own relay (optional)
+
+If you host your own copy of the relay, point the addon at it with
+`//vt url wss://<host>` before pairing. Use `wss://`. Plain `ws://` is accepted
+only for `localhost` and `127.0.0.1`, for testing against a relay on the same PC.
+
 ## Commands
 
 | Command | What it does |
 | --- | --- |
-| `//vt url <wss://host>` | set the relay address |
+| `//vt url <wss://host>` | use a different relay (advanced) |
 | `//vt pair <code>` | pair with the code shown on your phone |
 | `//vt status` | show the connection state |
 | `//vt on \| //vt off` | start or stop relaying |

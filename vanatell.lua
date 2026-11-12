@@ -35,7 +35,10 @@ local CA_FILE = windower.addon_path .. 'cacert.pem'
 
 -- Saved with 'all': the default per-character save does nothing while the
 -- player is not logged in.
-local settings = config.load({url = '', token = '', account_id = '', enabled = true})
+-- Every install talks to the one VanaTell relay. //vt url overrides it for people running their own.
+local DEFAULT_URL = 'wss://vanatell.rob-shelnutt.workers.dev'
+local settings = config.load({url = DEFAULT_URL, token = '', account_id = '', enabled = true})
+if type(settings.url) ~= 'string' or settings.url == '' then settings.url = DEFAULT_URL end
 
 -- state: unpaired | disabled | waiting | connecting | open | unauthorized
 local app = {
@@ -97,7 +100,7 @@ local function log(line)
 end
 ws.log = log -- ws.lua's one-time notices, such as a TLS options fallback
 
-local NOT_PAIRED = 'not paired: set the relay with //vt url wss://<host>, then //vt pair <code>'
+local NOT_PAIRED = 'not paired: run //vt pair <code> with the code from the VanaTell app'
 local REJECTED = 'relay rejected the addon token; pair again with //vt pair <code>'
 local ACCOUNT_DELETED = 'account deleted on the phone; set up the app again, then //vt pair <code>'
 

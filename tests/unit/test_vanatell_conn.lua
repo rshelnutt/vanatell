@@ -5,7 +5,7 @@ local PAIRED = {url = 'wss://relay.example.com', token = 'tok123' .. ('A'):rep(1
 local function last(X) local l = X.W.lines(); return l[#l] end
 T.test('unpaired load explains pairing and opens nothing', function()
   local X = boot{}; T.eq(X.app.state, 'unpaired'); T.eq(#X.F.clients, 0); T.eq(_addon.command, 'vt')
-  T.eq(X.W.lines(), {'vanatell: not paired: set the relay with //vt url wss://<host>, then //vt pair <code>'})
+  T.eq(X.W.lines(), {'vanatell: not paired: run //vt pair <code> with the code from the VanaTell app'})
   T.eq(boot{stored = {url = {}, token = 'x', enabled = true}}.app.state, 'unpaired')
 end)
 T.test('paired load connects with bearer header and bundled CA; prerender pumps', function()
@@ -124,7 +124,7 @@ T.test('a stored token not in the relay format counts as not paired', function()
   for _, token in ipairs({'tok123', good .. '\r\nX-Evil: 1', good:sub(1, 22) .. '\r\n' .. good:sub(25), ' ' .. good:sub(2), good .. 'b'}) do
     local X = boot{stored = {url = 'wss://relay.example.com', token = token, account_id = 'acc1', enabled = true}}
     T.eq(X.app.state, 'unpaired'); T.eq(#X.F.clients, 0)
-    T.eq(last(X), 'vanatell: not paired: set the relay with //vt url wss://<host>, then //vt pair <code>')
+    T.eq(last(X), 'vanatell: not paired: run //vt pair <code> with the code from the VanaTell app')
     X.cmd('on'); X.cmd('url', 'wss://other.example.com'); X.tick(60); T.eq(#X.F.clients, 0); T.eq(X.app.state, 'unpaired')
     X.cmd('status'); local l = X.W.lines(); T.eq({l[#l - 3], l[#l - 1]}, {'vanatell: paired: no', 'vanatell: connection: not paired'})
   end

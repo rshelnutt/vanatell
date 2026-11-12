@@ -9,7 +9,7 @@ T.test('a copied install loads on its own', function()
   assert(os.execute('mkdir -p "' .. target .. '" && cp "' .. src .. '"*.lua "' .. src .. '"*.pem "' .. src .. '"*.md "' .. target .. '"') == 0)
   local W = require('windower_stub').install{addon_path = target}; require('config')._reset(); __vanatell_test = nil
   dofile(target .. 'vanatell.lua'); W.fire('load')
-  T.eq(W.lines(), {'vanatell: not paired: set the relay with //vt url wss://<host>, then //vt pair <code>'})
+  T.eq(W.lines(), {'vanatell: not paired: run //vt pair <code> with the code from the VanaTell app'})
   os.execute('rm -rf "' .. dir .. '"')
 end)
 T.test('README covers install, pairing and third-party sources', function()
