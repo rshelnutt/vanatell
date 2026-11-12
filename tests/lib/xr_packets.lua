@@ -5,6 +5,8 @@
 --   P.incoming_chat(3, 'Kupo', 'hey')   -- 0x017
 --   P.outgoing_ls(5, 'hi all')          -- 0x0B5
 --   P.outgoing_tell('Kupo', 'yo')       -- 0x0B6
+--   P.linkshell_equip(1, 5, 0)          -- 0x0E0
+--   P.zone_in()                         -- 0x00A
 local P = {}
 
 local function name_field(name)
@@ -29,6 +31,16 @@ end
 -- bytes 3, 0, target NUL-padded to 15, text, NUL
 function P.outgoing_tell(target, text)
   return packet(0x0B6, string.char(3, 0) .. name_field(target) .. text .. '\0')
+end
+
+-- linkshell number (1 or 2), inventory slot, bag, 1 pad byte
+function P.linkshell_equip(number, slot, bag)
+  return packet(0x0E0, string.char(number, slot, bag, 0))
+end
+
+-- Only the header matters to the addon: the body is zeros.
+function P.zone_in()
+  return packet(0x00A, ('\0'):rep(16))
 end
 
 return P

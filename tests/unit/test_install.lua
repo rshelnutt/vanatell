@@ -1,8 +1,8 @@
 local T = require('testlib'); local src = os.getenv('XR_ADDON_DIR')
-T.test('addon folder holds exactly the six shipped files', function()
+T.test('addon folder holds exactly the seven shipped files', function()
   local p = io.popen('ls -p "' .. src .. '" | grep -v /'); local names = {}
   for n in p:lines() do names[#names + 1] = n end; p:close(); table.sort(names)
-  T.eq(names, {'README.md', 'cacert.pem', 'chat.lua', 'json.lua', 'vanatell.lua', 'ws.lua'})
+  T.eq(names, {'README.md', 'cacert.pem', 'chat.lua', 'json.lua', 'linkshells.lua', 'vanatell.lua', 'ws.lua'})
 end)
 T.test('a copied install loads on its own', function()
   local dir = os.tmpname(); os.remove(dir); local target = dir .. '/Windower4/addons/vanatell/'
