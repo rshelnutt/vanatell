@@ -432,8 +432,10 @@ end
 -- no longer app.pairing.
 function commands.pair(code)
   if not is_set(settings.url) then return log('set the relay url first: //vt url wss://<host>') end
+  -- Case-insensitive, and dashes or spaces from the phone's display are dropped, as the relay does.
   -- [A-Za-z0-9] is %w without the locale.
-  if type(code) ~= 'string' or #code ~= 8 or not code:find('^[A-Za-z0-9]+$') then
+  code = type(code) == 'string' and code:upper():gsub('[%s%-]', '') or ''
+  if #code ~= 8 or not code:find('^[A-Z0-9]+$') then
     return log('pairing code must be 8 letters or digits')
   end
   if app.pairing then return log('pairing already in progress') end

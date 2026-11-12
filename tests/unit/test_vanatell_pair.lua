@@ -8,6 +8,8 @@ local function reply(id, token) return '{"accountId":"' .. id .. '","addonToken"
 T.test('pair uses the built-in relay and needs an 8-character code', function()
   local X = boot{}; X.cmd('pair', 'ABCD2345'); T.eq(#X.F.requests, 1)
   T.eq(X.F.requests[1].opts.url, 'https://vanatell.rob-shelnutt.workers.dev/v1/pair')
+  T.eq(X.F.requests[1].opts.body, '{"code":"ABCD2345"}')
+  X = boot{}; X.cmd('pair', 'abcd-2345'); T.eq(X.F.requests[1].opts.body, '{"code":"ABCD2345"}')
   X = boot{stored = {url = 'wss://relay.example.com'}}
   for _, code in ipairs({'abc', 'ABCD-234', 'ABCD23456'}) do X.cmd('pair', code); T.eq(last(X), 'vanatell: pairing code must be 8 letters or digits') end
   X.cmd('pair'); T.eq(last(X), 'vanatell: pairing code must be 8 letters or digits'); T.eq(#X.F.requests, 0)
