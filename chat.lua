@@ -32,8 +32,12 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 -- Packet strings are 1-indexed, so Lua byte N is packet offset N - 1.
 -- Chat modes are the game's (Windower's res.chat ids): 3 tell, 4 party,
 -- 5 linkshell, 27 linkshell 2. Say, shout, yell, emotes, alliance and the
--- rest are not carried.
+-- rest are not carried. Game text is Shift-JIS (cp932) and relay text is
+-- UTF-8; sjis.lua converts between them.
 local chat = {}
+
+-- A sibling file, loaded with dofile like the others in vanatell.lua.
+local sjis = dofile(windower.addon_path .. 'sjis.lua')
 
 chat.MAX_TEXT = 150
 
@@ -61,7 +65,7 @@ local function trim(s)
   return s:sub(first, last)
 end
 
--- Game chat text to printable ASCII, or nil if nothing printable is left.
+-- Game chat text (cp932) to UTF-8, or nil if nothing printable is left.
 function chat.sanitize(raw)
   -- Windower can expand auto-translate blocks into the phrase text for the
   -- game's language; a block it leaves behind still becomes [AT] below.
@@ -95,10 +99,14 @@ function chat.sanitize(raw)
       -- any other control byte is dropped
     elseif b <= 0x7E then
       out[#out + 1] = string.char(b)
-    elseif ((b >= 0x81 and b <= 0x9F) or (b >= 0xE0 and b <= 0xFC)) and i < n then
-      out[#out + 1] = '?'; step = 2 -- Shift-JIS lead and trail byte
+    elseif b == 0xEF and (raw:byte(i + 1) == 0x27 or raw:byte(i + 1) == 0x28) then
+      -- The game's auto-translate open and close marks, not cp932: shown as
+      -- { and }, as the game log shows them
+      out[#out + 1] = raw:byte(i + 1) == 0x27 and '{' or '}'; step = 2
     else
-      out[#out + 1] = '?'
+      -- Shift-JIS: a lead and trail byte, or halfwidth katakana; '?' if it
+      -- has no character
+      out[#out + 1], step = sjis.decode_char(raw, i)
     end
     i = i + step
   end
@@ -143,9 +151,11 @@ end
 
 -- Phone text -> (game command, clean text), or (nil, err). Only a tell has a
 -- target; party and linkshell sends ignore it. The command is the
--- only string that reaches windower.send_command, so the clean text holds
--- only printable ASCII, no ';' (Windower splits commands on it), and never
--- starts with '/' or a space.
+-- only string that reaches windower.send_command, so its text holds no
+-- control bytes and no ';' (Windower splits commands on it), never starts
+-- with '/' or a space, and is cp932, the game's own text. The clean text is
+-- that same text in UTF-8, as the game's copy of it will read: a character
+-- cp932 lacks (an emoji, say) is '?' in both.
 function chat.validate_send(channel, target, text)
   local command = SEND_PREFIXES[channel]
   if not command then return nil, 'invalid channel' end
@@ -156,14 +166,16 @@ function chat.validate_send(channel, target, text)
   if type(text) ~= 'string' then return nil, 'invalid text' end
   text = text:gsub('[\r\n\t]+', ' ')
   text = text:gsub('[%z\1-\31\127]', '')
-  text = text:gsub('[\192-\247][\128-\191]*', '?')
-  text = text:gsub('[\128-\255]', '?')
   text = text:gsub(';', ',')
   text = trim(text)
   if text == '' then return nil, 'empty text' end
   if text:sub(1, 1) == '/' then return nil, 'text must not start with /' end
-  text = trim(text:sub(1, chat.MAX_TEXT))
-  return command .. text, text
+  -- Cut at MAX_TEXT bytes, dropping a UTF-8 character the cut would split.
+  local cut = text:sub(1, chat.MAX_TEXT)
+  local next_byte = text:byte(chat.MAX_TEXT + 1)
+  if next_byte and next_byte >= 0x80 and next_byte <= 0xBF then cut = cut:gsub('[\192-\255][\128-\191]*$', '') end
+  local game = sjis.encode(trim(cut))
+  return command .. game, sjis.decode(game)
 end
 
 return chat

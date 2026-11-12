@@ -22,6 +22,13 @@ How a release is cut (no scripts needed):
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-11-12
+
+### Fixed
+
+- Japanese chat: lines from Japanese players show on the phone instead of
+  "???", and Japanese typed on the phone reaches the game.
+
 ## [0.1.1] - 2026-11-12
 
 ### Added
@@ -57,6 +64,7 @@ How a release is cut (no scripts needed):
 - Case-insensitive pair codes: upper or lower case both work, and dashes or
   spaces copied from the phone are ignored.
 
-[Unreleased]: https://github.com/rshelnutt/vanatell/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/rshelnutt/vanatell/compare/v0.1.2...HEAD
+[0.1.2]: https://github.com/rshelnutt/vanatell/releases/tag/v0.1.2
 [0.1.1]: https://github.com/rshelnutt/vanatell/releases/tag/v0.1.1
 [0.1.0]: https://github.com/rshelnutt/vanatell/releases/tag/v0.1.0

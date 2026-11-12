@@ -28,6 +28,8 @@ VanaTell is a Windower addon that sends your tells, party chat and linkshell cha
 - **Answer from the phone.** Send a tell, a party line, an LS1 line or an LS2 line from the app, and the addon types it in game for you.
 - **Linkshells detected for you.** The addon reads the name of the linkshell equipped in each slot, and whether a slot has one equipped at all, so the app files every line under the right shell.
 
+Japanese chat is carried both ways: Japanese lines show on your phone as written, and Japanese you type on the phone reaches the game.
+
 Say, shout, yell, emotes and system messages stay in game.
 
 ## Nothing to configure
@@ -77,7 +79,7 @@ To pair again later, open **Settings** in the app and tap **Generate new pairing
 `//vt status` prints, for example:
 
 ```
-VanaTell: version: 0.1.1
+VanaTell: version: 0.1.2
 VanaTell: relay: built-in
 VanaTell: paired: yes (account ...)
 VanaTell: enabled: yes
@@ -102,7 +104,7 @@ VanaTell: linkshells: 1=KupoKnights 2=(none)
 **What the phone can do in game**
 
 - Only `/tell`, `/p`, `/l` and `/l2`. No other game or Windower command can come from the phone, and text starting with `/` is refused.
-- Text is cut at 150 bytes, `;` becomes `,`, and anything outside plain ASCII shows as `?`.
+- Text is cut at 150 bytes and `;` becomes `,`. Japanese is carried both ways; only characters the game lacks (emoji, for instance) show as `?`.
 
 **On your PC**
 
@@ -127,7 +129,7 @@ Everything travels over an encrypted connection, and the addon checks the relay'
 
 VanaTell follows [semantic versioning](https://semver.org). `//vt status` shows the version you have, and [CHANGELOG.md](CHANGELOG.md) lists what changed in each one. Until 1.0, 0.x releases may change behaviour between minor versions.
 
-Each release is published on the [Releases](../../releases) page as `vanatell-vX.Y.Z.zip`, for example `vanatell-v0.1.1.zip`. The zip holds exactly the `vanatell` addon folder: unzip it into `Windower4/addons/`.
+Each release is published on the [Releases](../../releases) page as `vanatell-vX.Y.Z.zip`, for example `vanatell-v0.1.2.zip`. The zip holds exactly the `vanatell` addon folder: unzip it into `Windower4/addons/`.
 
 ## Licence
 
