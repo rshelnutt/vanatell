@@ -1,9 +1,9 @@
 -- vanatell: relays FFXI tells and linkshell chat to a phone through the relay.
 -- This file holds the Windower events, the //vt commands (pairing among
 -- them), the settings, the connection lifecycle (connect, ping, idle timeout
--- and reconnect with backoff), chat capture with its offline queue, and the
--- phone's send frames. All network work is pumped from prerender and never
--- blocks.
+-- and reconnect with backoff), chat capture with its offline queue, the
+-- phone's send frames, and the linkshells frame (which shell is equipped in
+-- slots 1 and 2). All network work is pumped from prerender and never blocks.
 _addon.name = 'vanatell'
 _addon.command = 'vt'
 _addon.version = '1.0.0'
@@ -15,6 +15,7 @@ local config = require('config')
 local hooks = rawget(_G, '__vanatell_test') or {}
 local function load_local(name) return hooks[name] or dofile(windower.addon_path .. name .. '.lua') end
 local json, chat, ws = load_local('json'), load_local('chat'), load_local('ws')
+local linkshells = load_local('linkshells')
 local now = hooks.now or require('socket').gettime
 
 local BACKOFF_MIN = 1      -- seconds before the first retry
@@ -29,6 +30,11 @@ local ECHO_WINDOW = 10        -- seconds a phone send waits for the game's copy 
 local EXECUTED_IDS_MAX = 200  -- send ids remembered, so a replayed id runs once
 local RELAY_MESSAGE_MAX = 120 -- characters of a relay error message shown in game
 local ACCOUNT_ID_MAX = 64     -- longest accountId accepted from the relay
+
+local LS_PERIOD = 60      -- seconds between linkshell reads
+local LS_GAP = 2          -- shortest time between two linkshells frames
+local LS_EQUIP_SETTLE = 1 -- wait after a linkshell equip packet before reading
+local LS_ZONE_SETTLE = 5  -- wait after zone-in or login, while the inventory loads
 
 local PING = '{"type":"ping"}'
 local CA_FILE = windower.addon_path .. 'cacert.pem'
@@ -56,6 +62,15 @@ local app = {
   last_error = nil,    -- why the last connection ended
   outage = false,      -- a connection was lost and none has opened since
   opened_at = nil, last_rx = nil, last_ping = nil,
+  ls = {               -- linkshell detection
+    equips = {},       -- 'bag:slot' -> 1 or 2, from the 0x0E0 packets since load or logout
+    current = nil,     -- the last read, {ls1 =, ls2 =}; nil until one works
+    sent = nil,        -- what the last linkshells frame on this socket said
+    sent_at = nil,     -- when it went
+    pending = nil,     -- a change waiting for LS_GAP to pass
+    due = nil,         -- when the read an event asked for happens
+    next_read = 0,     -- when the periodic read happens
+  },
 }
 hooks.app = app
 
@@ -212,6 +227,76 @@ local function handle_send(client, frame)
 end
 
 ---------------------------------------------------------------------------
+-- Linkshells: which shell is equipped in slots 1 and 2, for the relay.
+---------------------------------------------------------------------------
+local extdata -- Windower's libs/extdata, loaded on the first read; false if it would not load
+
+local function load_extdata()
+  if extdata == nil then
+    local ok, lib = pcall(require, 'extdata')
+    extdata = ok and type(lib) == 'table' and type(lib.decode) == 'function' and lib or false
+    if not extdata then log('linkshell names unavailable: extdata did not load') end
+  end
+  return extdata
+end
+
+-- The linkshells equipped now, or nil while the game data cannot be read
+-- (not logged in, say).
+local function read_linkshells()
+  local ok, state = pcall(function()
+    local player = windower.ffxi.get_player()
+    if not player then return nil end
+    local items = windower.ffxi.get_items()
+    if type(items) ~= 'table' or not load_extdata() then return nil end
+    return linkshells.detect(player, items, extdata.decode, app.ls.equips)
+  end)
+  return ok and state or nil
+end
+
+local function shell_json(shell)
+  if not shell then return NULL end
+  return {name = shell.name, color = shell.color}
+end
+
+local function send_linkshells(state, t)
+  local ls = app.ls
+  app.client:send_text(encode_fields{{'type', 'linkshells'}, {'ls1', shell_json(state.ls1)}, {'ls2', shell_json(state.ls2)}})
+  ls.sent, ls.sent_at, ls.pending = state, t, nil
+end
+
+-- Sends a state that differs from the one last sent on this socket, at most
+-- one frame every LS_GAP seconds: a change inside the gap waits for its end,
+-- and one undone inside it is never sent.
+local function offer_linkshells(state, t)
+  local ls = app.ls
+  if app.state ~= 'open' then return end
+  if ls.sent and linkshells.same(state, ls.sent) then
+    ls.pending = nil
+  elseif ls.sent_at and t - ls.sent_at < LS_GAP then
+    ls.pending = state
+  else
+    send_linkshells(state, t)
+  end
+end
+
+local function check_linkshells(t)
+  local ls = app.ls
+  ls.due, ls.next_read = nil, t + LS_PERIOD
+  local state = read_linkshells()
+  if not state then return end
+  ls.current = state
+  offer_linkshells(state, t)
+end
+
+-- An event may have changed what is equipped. The game applies a packet
+-- after its chunk handler runs, so the read waits; a later request pushes it
+-- back rather than forward.
+local function check_linkshells_in(delay)
+  local ls, at = app.ls, now() + delay
+  if not ls.due or ls.due < at then ls.due = at end
+end
+
+---------------------------------------------------------------------------
 -- Connection lifecycle.
 ---------------------------------------------------------------------------
 -- Starts the wait before the next attempt. The connection lost line is
@@ -243,7 +328,7 @@ local function drop_client(code, reason)
   client:abort()
 end
 
--- The held chat goes out first, in order.
+-- The held chat goes out first, in order, then the linkshells.
 local function on_open(client)
   if client ~= app.client then return end
   local queue = app.queue
@@ -254,6 +339,9 @@ local function on_open(client)
   app.last_rx, app.last_ping, app.opened_at = t, t, t
   log(app.outage and 'reconnected to relay' or 'connected to relay')
   app.outage = false
+  local ls = app.ls
+  ls.sent, ls.sent_at, ls.pending = nil, nil, nil
+  check_linkshells(t)
 end
 
 local function on_message(client, text)
@@ -460,6 +548,17 @@ function commands.pair(code)
   log('pairing...')
 end
 
+local function shell_text(shell)
+  return shell and shell.name or '(none)'
+end
+
+-- Read on the spot, so it shows what is equipped even while not connected.
+local function linkshells_text()
+  local state = read_linkshells()
+  if not state then return 'unknown' end
+  return '1=' .. shell_text(state.ls1) .. ' 2=' .. shell_text(state.ls2)
+end
+
 function commands.status()
   log('relay url: ' .. (is_set(settings.url) and settings.url or 'not set'))
   if is_token(settings.token) then
@@ -470,6 +569,7 @@ function commands.status()
   log('enabled: ' .. (is_enabled() and 'yes' or 'no'))
   log('connection: ' .. connection_text())
   log('queued: ' .. #app.queue)
+  log('linkshells: ' .. linkshells_text())
 end
 
 function commands.on()
@@ -529,6 +629,9 @@ windower.register_event('prerender', function()
       app.last_ping = t
     end
   end
+  local ls = app.ls
+  if (ls.due and t >= ls.due) or (not ls.due and t >= ls.next_read) then check_linkshells(t) end
+  if ls.pending and app.state == 'open' and t - ls.sent_at >= LS_GAP then send_linkshells(ls.pending, t) end
 end)
 
 -- The chunk handlers return nothing, so they never block a packet.
@@ -539,6 +642,25 @@ windower.register_event('incoming chunk', function(id, data)
   local me = player_name()
   if me and record.sender:lower() == me:lower() then return end
   deliver(chat_frame(record.channel, 'in', record.sender, NULL, record.text))
+end)
+
+-- Linkshell equip (0x0E0) and zone-in (0x00A, after which the inventory
+-- reloads) ask for a read once the game has caught up.
+windower.register_event('incoming chunk', function(id, data)
+  if id == 0x0E0 then
+    if linkshells.note_equip(app.ls.equips, data) then check_linkshells_in(LS_EQUIP_SETTLE) end
+  elseif id == 0x00A then
+    check_linkshells_in(LS_ZONE_SETTLE)
+  end
+end)
+
+windower.register_event('login', function()
+  check_linkshells_in(LS_ZONE_SETTLE)
+end)
+
+-- Another character may log in next, with other shells in other bag slots.
+windower.register_event('logout', function()
+  app.ls.equips, app.ls.current = {}, nil
 end)
 
 windower.register_event('outgoing chunk', function(id, data, modified, injected, blocked)

@@ -1,5 +1,7 @@
 -- Stand-in for Windower 4's `windower` global. It records what the addon
 -- does (commands, chat lines) and lets tests fire events at its handlers.
+-- W.player is what get_player() returns and W.items what get_items() returns;
+-- W.items stays nil (no inventory to read) until a test sets it.
 --   local W = require('windower_stub').install()
 local W = {}
 
@@ -8,6 +10,7 @@ local handlers = {}
 function W.install(opts)
   opts = opts or {}
   W.player = {name = 'Me'}
+  W.items = nil
   W.commands = {}
   W.chat = {}
   handlers = {}
@@ -32,6 +35,7 @@ function W.install(opts)
     end,
     ffxi = {
       get_player = function() return W.player end,
+      get_items = function() return W.items end,
       get_info = function() return {logged_in = W.player ~= nil} end,
     },
   }
