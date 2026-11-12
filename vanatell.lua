@@ -250,13 +250,13 @@ local function load_extdata()
 end
 
 -- The linkshells equipped now, or nil while the game data cannot be read
--- (not logged in, say).
+-- (not logged in, or the inventory not loaded yet, say).
 local function read_linkshells()
   local ok, state = pcall(function()
     local player = windower.ffxi.get_player()
     if not player then return nil end
     local items = windower.ffxi.get_items()
-    if type(items) ~= 'table' or not load_extdata() then return nil end
+    if not linkshells.inventory_loaded(items) or not load_extdata() then return nil end
     return linkshells.detect(player, items, extdata.decode, app.ls.equips)
   end)
   return ok and state or nil

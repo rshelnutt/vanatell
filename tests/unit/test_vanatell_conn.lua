@@ -155,7 +155,7 @@ T.test('linkshells go out right after open, after the held chat, with null for a
   T.ok(c.sent[2]:find('^{"type":"linkshells","ls1":{[^}]*},"ls2":null}$'), c.sent[2])
   T.eq(json.decode(c.sent[2]), {type = 'linkshells', ls1 = KUPO})
   X.F.drop(c, 1006, 'connection lost'); X.tick(1); local c2 = X.F.last(); X.F.open(c2); T.eq(c2.sent, {c.sent[2]})
-  X.W.items = {}; X.F.drop(c2, 1006, 'connection lost'); X.tick(2); local c3 = X.F.last(); X.F.open(c3)
+  X.W.items = {[0] = {[1] = {id = 4096, count = 1, status = 0}}}; X.F.drop(c2, 1006, 'connection lost'); X.tick(2); local c3 = X.F.last(); X.F.open(c3)
   T.eq(c3.sent, {'{"type":"linkshells","ls1":null,"ls2":null}'})
 end)
 T.test('0x0E0 is never blocked; the read a second later is sent only when it changed', function()
@@ -217,5 +217,16 @@ T.test('extdata that will not load: linkshells stay unknown, one log line says s
   package.preload.extdata = nil; package.loaded.extdata = saved
   T.eq(ls_sent(c), {}); T.eq(last(X), 'vanatell: linkshells: unknown')
   local n = 0; for _, l in ipairs(X.W.lines()) do if l == 'vanatell: linkshell names unavailable: extdata did not load' then n = n + 1 end end; T.eq(n, 1)
+end)
+T.test('an inventory that has not finished loading is unreadable: nothing is sent, status says unknown, the last state stays', function()
+  local X = boot{stored = PAIRED}; wear(X, 'KupoKnights', {[1] = kupo()}); local c = X.F.clients[1]; X.F.open(c); T.eq(#ls_sent(c), 1)
+  X.W.fire('incoming chunk', 0x00A, P.zone_in()); X.W.items = {[0] = {max = 80, count = 0, enabled = true}}; X.tick(5)
+  T.eq(#ls_sent(c), 1); X.cmd('status'); T.eq(last(X), 'vanatell: linkshells: unknown')
+  X.W.fire('incoming chunk', 0x017, P.incoming_chat(5, 'Kupo', 'still')); T.ok(c.sent[#c.sent]:find('"linkshell":"KupoKnights"', 1, true))
+  for _, items in ipairs({{[0] = {max = 80, count = 3, enabled = false, [1] = kupo()}}, {[8] = {[1] = kupo()}}, {}}) do
+    X.W.items = items; X.cmd('status'); T.eq(last(X), 'vanatell: linkshells: unknown')
+  end
+  X.W.items = {[0] = {max = 80, count = 2, enabled = true, [1] = kupo(), [2] = mog()}}; X.tick(60)
+  T.eq(#ls_sent(c), 2); T.eq(last_ls(c), {type = 'linkshells', ls1 = KUPO, ls2 = MOG})
 end)
 T.done()

@@ -92,6 +92,22 @@ function M.detect(player, bags, decode, equips)
   return result
 end
 
+-- True when get_items() shows the inventory loaded: the bag is there, not
+-- disabled, and holds an item (by its count or by an item in a slot). While
+-- the game is still loading it, after login or zoning, the bag reads empty,
+-- and empty slots read from it would be wrong.
+function M.inventory_loaded(bags)
+  if type(bags) ~= 'table' then return false end
+  local inventory = bags[0] or bags.inventory
+  if type(inventory) ~= 'table' or inventory.enabled == false then return false end
+  if type(inventory.count) == 'number' and inventory.count > 0 then return true end
+  for slot = 1, BAG_SLOTS do
+    local item = inventory[slot]
+    if type(item) == 'table' and type(item.id) == 'number' and item.id ~= 0 then return true end
+  end
+  return false
+end
+
 -- 0x0E0, Linkshell Equip: offset 4 the linkshell number (1 or 2), 5 the
 -- inventory slot, 6 the bag. -> number, slot, bag | nil
 function M.parse_equip(data)
