@@ -14,6 +14,11 @@ Tells, LS1 and LS2 only.
   addon types it in game for you.
 - Say, party, shout, yell, emotes and system messages are not carried.
 
+The addon also detects the name of the linkshell equipped in each slot, and
+whether a slot has one equipped at all, and sends that to the app.
+`//vt status` shows what it detects on its `linkshells:` line, for example
+`linkshells: 1=KupoKnights 2=(none)`.
+
 ## Install
 
 1. Get the addon into `Windower4/addons/vanatell`, either way:
