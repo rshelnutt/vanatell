@@ -73,9 +73,13 @@ only for `localhost` and `127.0.0.1`, for testing against a relay on the same PC
 What the addon sends to the relay:
 
 - One message per tell, LS1 or LS2 line: the channel, whether it came in or
-  went out, the sender, the tell target, the text and the time.
+  went out, the sender, the tell target, the text and the time. Linkshell
+  lines also carry the name of the linkshell equipped in that slot.
+- The names and colours of the linkshells equipped in slots 1 and 2, when
+  they change.
 - A keepalive every 30 seconds, exactly the bytes `{"type":"ping"}`.
-- Nothing else from the game.
+- Nothing else from the game: no inventory, gil, position, job or other
+  players' data.
 
 What the phone can do in game:
 
