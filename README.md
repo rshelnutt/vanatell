@@ -1,32 +1,53 @@
-# VanaTell
+<p align="center">
+  <img src="assets/icon-512.png" width="160" alt="VanaTell" />
+</p>
 
-A Windower 4 addon that carries your FFXI chat to the VanaTell app on your
-Android phone, and lets you answer from the phone. It talks to your own relay
-over a secure WebSocket.
+<h1 align="center">VanaTell</h1>
+
+<p align="center">
+  <strong>Vana'diel keeps talking. Now you can answer: Every tell, every shell, anywhere.</strong>
+</p>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/Windower-4-726AF7" alt="Windower 4" />
+  <img src="https://img.shields.io/badge/Android-app-3DDC84?logo=android" alt="Android app" />
+  <img src="https://img.shields.io/badge/FFXI-PC-B8860B" alt="FFXI" />
+</p>
+
+<p align="center">
+  <img src="assets/hero.png" width="800" alt="The VanaTell app on three phones: the tells list, a tell conversation and the linkshells list" />
+</p>
+
+---
 
 ## What it does
 
-Tells, LS1 and LS2 only.
+VanaTell is a Windower addon that sends your tells and linkshell chat to the VanaTell app on your Android phone, so you can step away from the PC and still answer.
 
-- Every tell you receive or send, and every LS1 and LS2 line, appears on the
-  phone. Tells and linkshell lines you type on the keyboard show up there too.
-- From the phone you can send a tell, an LS1 line or an LS2 line, and the
-  addon types it in game for you.
-- Say, party, shout, yell, emotes and system messages are not carried.
+- **Tells, LS1 and LS2 on your phone.** Every tell you receive or send, and every LS1 and LS2 line, shows up in the app. Lines you type at the keyboard show up there too.
+- **Answer from the phone.** Send a tell, an LS1 line or an LS2 line from the app, and the addon types it in game for you.
+- **Linkshells detected for you.** The addon reads the name of the linkshell equipped in each slot, and whether a slot has one equipped at all, so the app files every line under the right shell.
 
-The addon also detects the name of the linkshell equipped in each slot, and
-whether a slot has one equipped at all, and sends that to the app.
-`//vt status` shows what it detects on its `linkshells:` line, for example
-`linkshells: 1=KupoKnights 2=(none)`.
+Say, party, shout, yell, emotes and system messages stay in game.
+
+## Nothing to configure
+
+The relay address is built in. There is no server to set up and no settings file to edit. The only thing you type is `//vt pair CODE`, once.
+
+## Requirements
+
+- Final Fantasy XI on Windows with [Windower 4](https://www.windower.net/)
+- The VanaTell app on your Android phone
 
 ## Install
 
-1. Get the addon into `Windower4/addons/vanatell`, either way:
-   - `git clone https://github.com/rshelnutt/vanatell.git Windower4/addons/vanatell`
-   - or download the repo as a zip and unzip its contents into `Windower4/addons/vanatell`,
-     so that `Windower4/addons/vanatell/vanatell.lua` exists.
-2. In game, run `//lua load vanatell`. To load it automatically, add
-   `lua load vanatell` to `Windower4/scripts/init.txt`.
+1. Put the addon in `Windower4/addons/vanatell`. Either download `vanatell-vX.Y.Z.zip` from [Releases](../../releases) and unzip it into `Windower4/addons/`, or clone it:
+   ```
+   git clone https://github.com/rshelnutt/vanatell.git Windower4/addons/vanatell
+   ```
+   Either way, `Windower4/addons/vanatell/vanatell.lua` must exist.
+2. In game, type `//lua load vanatell`.
+3. To load it every time you start the game, add `lua load vanatell` to `Windower4/scripts/init.txt`.
 
 Until it is paired, loading it prints:
 
@@ -36,121 +57,83 @@ vanatell: not paired: run //vt pair <code> with the code from the VanaTell app
 
 ## Pair
 
-1. In the VanaTell app, open Settings and tap "Generate new pairing code". A code
-   works once, within 10 minutes.
-2. Run `//vt pair CODE`, with the 8 letters or digits from the phone in place
-   of `CODE`. The addon prints `paired (account ...)`, then
-   `connected to relay`.
-3. Check with `//vt status`. It should show `connection: connected`.
+1. Open the VanaTell app. It shows a pairing code and the command to type. A code works once, within 10 minutes. Tap **Generate new code** if it runs out.
+2. In game, type `//vt pair CODE` with the code from the app in place of `CODE`. Upper or lower case both work.
+3. The game log shows `vanatell: paired (account ...)`, then `vanatell: connected to relay`. You're done.
 
-The relay address is built in; there is nothing to configure.
-
-If relaying was turned off with `//vt off`, pairing prints
-`relay is off; //vt on to start`: run `//vt on` to connect.
-
-A new pairing code does not cut off the addon that is already paired. The
-relay revokes the old addon token only once the new code is used.
-
-### Running your own relay (optional)
-
-If you host your own copy of the relay, point the addon at it with
-`//vt url wss://<host>` before pairing. Use `wss://`. Plain `ws://` is accepted
-only for `localhost` and `127.0.0.1`, for testing against a relay on the same PC.
+To pair again later, open **Settings** in the app and tap **Generate new pairing code**.
 
 ## Commands
 
 | Command | What it does |
 | --- | --- |
-| `//vt url <wss://host>` | use a different relay (advanced) |
-| `//vt pair <code>` | pair with the code shown on your phone |
-| `//vt status` | show the connection state |
-| `//vt on \| //vt off` | start or stop relaying |
-| `//vt unpair` | forget this addon's relay token |
-| `//vt help` | show this list |
+| `//vt pair CODE` | Pair with the code shown in the app |
+| `//vt status` | Show the relay address, pairing, connection, queued messages and linkshells |
+| `//vt on` / `//vt off` | Start or stop relaying |
+| `//vt unpair` | Forget this PC's pairing |
+| `//vt help` | List the commands in game |
+| `//vt url wss://host` | Advanced: use your own relay instead of the built-in one |
 
-## What gets sent and what the phone can do
+`//vt status` prints, for example:
 
-What the addon sends to the relay:
+```
+vanatell: version: 0.1.0
+vanatell: relay url: wss://vanatell.rob-shelnutt.workers.dev
+vanatell: paired: yes (account ...)
+vanatell: enabled: yes
+vanatell: connection: connected
+vanatell: queued: 0
+vanatell: linkshells: 1=KupoKnights 2=(none)
+```
 
-- One message per tell, LS1 or LS2 line: the channel, whether it came in or
-  went out, the sender, the tell target, the text and the time. Linkshell
-  lines also carry the name of the linkshell equipped in that slot.
-- The names and colours of the linkshells equipped in slots 1 and 2, when
-  they change.
-- A keepalive every 30 seconds, exactly the bytes `{"type":"ping"}`.
-- Nothing else from the game: no inventory, gil, position, job or other
-  players' data.
+## What is sent and what is not
 
-What the phone can do in game:
+**Sent to the relay**
 
-- The phone can only cause `/tell`, `/l` and `/l2`. No other slash command
-  and no Windower command can come from the phone.
-- Text starting with `/` is refused.
-- `;` becomes `,`.
-- Non-ASCII becomes `?`, in both directions: Japanese text in game shows as
-  `?` on the phone, and emoji or accented letters from the phone show as `?`
-  in game. Auto-translate phrases show as `[AT]`.
-- 150 bytes maximum. Longer text is cut.
-- A tell target must be a character name of 3 to 15 letters.
-- While you are logged out, sends from the phone fail with `not logged in`.
+- Each tell, LS1 and LS2 line: the channel, whether it came in or went out, who sent it, the tell target, the text, the time, and for linkshell lines the name of that linkshell.
+- The names and colours of the linkshells equipped in slots 1 and 2, when they change.
+- A keepalive every 30 seconds.
 
-## Where your data lives
+**Never sent**
 
-- `addons/vanatell/data/settings.xml` holds the relay URL and the addon token
-  in plain text. Treat it like a password: anyone who has the token can
-  connect to your relay as this addon. The addon never prints the token.
-- `//vt unpair` clears it: the token and the account id are wiped from the
-  file, and the relay URL stays. This forgets the token on this PC only; the
-  relay stops accepting it once you pair with a new code.
-- Messages captured while offline are held in memory only until reconnect,
-  up to 500. When the queue is full the oldest go first. Nothing is written
-  to disk, so unloading the addon, closing the game or `//vt unpair` drops
-  them. While relaying is off (`//vt off`) or the addon is not paired,
-  nothing is captured.
+- Say, party, shout, yell, emotes or system messages.
+- Your inventory, gil, position, job or anything else from the game.
+
+**What the phone can do in game**
+
+- Only `/tell`, `/l` and `/l2`. No other game or Windower command can come from the phone, and text starting with `/` is refused.
+- Text is cut at 150 bytes, `;` becomes `,`, and anything outside plain ASCII shows as `?`.
+
+**On your PC**
+
+- `addons/vanatell/data/settings.xml` holds the relay address and this PC's pairing token in plain text. Treat it like a password. `//vt unpair` wipes the token.
+- Lines that arrive while the relay is out of reach wait in memory, up to 500, and are never written to disk.
+
+Everything travels over an encrypted connection, and the addon checks the relay's certificate against the bundled Mozilla CA list.
 
 ## Troubleshooting
 
-`//vt status` shows the state on its `connection:` line.
+**`//lua load vanatell` says the addon does not exist.** The folder must be named exactly `vanatell`, with `vanatell.lua` directly inside it: `Windower4/addons/vanatell/vanatell.lua`. A zip from GitHub's **Code** button unzips as `vanatell-main`; rename it to `vanatell`.
 
-- `token rejected` -> pair again. The relay turned the addon token down, and
-  the addon does not retry until you pair again. The game log says why:
-  - `relay rejected the addon token; pair again with //vt pair <code>`: the
-    token was revoked (close code 4001) or the relay does not know it. Get
-    a new code on the phone, then run `//vt pair CODE`.
-  - `account deleted on the phone; set up the app again, then //vt pair <code>`:
-    the account was deleted on the phone (close code 4000). Set up the app
-    again, then run `//vt pair CODE`.
-- `retrying in Ns` -> check the URL and the relay. The reason for the last
-  failure follows in parentheses. The addon retries on its own, waiting 1 s
-  at first and doubling the wait up to 60 s.
-  - On Windows, a relay that refuses the connection shows as `timeout` after
-    about 10 seconds, rather than as `connection refused`. It is still a
-    failed connect, and the same retry wait applies.
-  - The relay's address is looked up once per host, and looked up again
-    after 3 failed connects in a row, so a relay that moved is found again
-    on its own.
+**`pairing failed: http 404`.** The addon is using an old relay address saved in `data/settings.xml`. Type `//vt url wss://vanatell.rob-shelnutt.workers.dev`, then `//vt pair CODE` again.
 
-## Third-party
+**`pairing failed: invalid_code`.** The code was mistyped, has run out or was already used. Get a new one in the app.
 
-- `json.lua`: rxi, MIT license, from
-  `https://raw.githubusercontent.com/rxi/json.lua/v0.1.2/json.lua`,
-  sha256 `b13df59b32c77db3bec7a1619280ea77ee5014e715ccffaa4876d857e3e9ab87`.
-- `cacert.pem`: the Mozilla CA bundle, MPL-2.0, from
-  `https://curl.se/ca/cacert.pem`. Certificate data from Mozilla as of
-  `Thu Nov  5 04:12:01 2026 GMT`, downloaded 2026-11-11,
-  sha256 `427c064216761a1e72a8b30f0d954d08cb6e4435a82091fb865afd20c8497285`.
-  The addon checks the relay's certificate against it.
+**Linkshell lines are missing, or status shows `linkshells: 1=(none)`.** That slot has no linkshell equipped. Equip the linkshell or pearl from your inventory or a wardrobe and the addon picks it up within a few seconds. `linkshells: unknown` means you are not logged in yet, or the game is still loading your inventory after a zone change.
 
-To refresh the bundle, run this in the `vanatell` folder:
+**`relay rejected the addon token`.** This PC's pairing was replaced or revoked. Get a new code in the app and type `//vt pair CODE`.
 
-```
-curl -fsSL https://curl.se/ca/cacert.pem -o cacert.pem
-curl -fsSL https://curl.se/ca/cacert.pem.sha256
-shasum -a 256 cacert.pem
-```
+## Versioning
 
-The hash the second command prints must equal the hash from the third. If
-they differ, do not use the file; download it again. On Windows,
-`certutil -hashfile cacert.pem SHA256` prints the same hash as `shasum`. The
-`## Certificate data from Mozilla as of:` line near the top of `cacert.pem`
-gives the new date.
+VanaTell follows [semantic versioning](https://semver.org). `//vt status` shows the version you have, and [CHANGELOG.md](CHANGELOG.md) lists what changed in each one. Until 1.0, 0.x releases may change behaviour between minor versions.
+
+Each release is published on the [Releases](../../releases) page as `vanatell-vX.Y.Z.zip`, for example `vanatell-v0.1.0.zip`. The zip holds exactly the `vanatell` addon folder: unzip it into `Windower4/addons/`.
+
+## Credits
+
+- `json.lua` by rxi, MIT licence, from `https://raw.githubusercontent.com/rxi/json.lua/v0.1.2/json.lua`.
+- `cacert.pem`, the Mozilla CA certificate bundle, MPL-2.0, via curl.se from `https://curl.se/ca/cacert.pem`.
+
+## Licence
+
+VanaTell is released under the BSD 3-Clause licence, as most Windower addons are. See [LICENSE](LICENSE). `json.lua` keeps its MIT licence and `cacert.pem` its MPL-2.0 licence.
