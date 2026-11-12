@@ -63,7 +63,7 @@ T.test('a token not in the relay format, or CR/LF in the reply, is never saved',
 end)
 T.test('re-pairing while connected closes the old client; backoff restarts at 1 s', function()
   local X = boot{stored = {url = 'wss://relay.example.com', token = tok('old'), account_id = 'acc1', enabled = true}}
-  local old = X.F.clients[1]; X.F.open(old); X.cmd('pair', 'k7m2q9xa'); T.eq(X.F.requests[1].opts.body, '{"code":"k7m2q9xa"}')
+  local old = X.F.clients[1]; X.F.open(old); X.cmd('pair', 'k7m2q9xa'); T.eq(X.F.requests[1].opts.body, '{"code":"K7M2Q9XA"}')
   X.F.respond(X.F.requests[1], 200, reply('acc2', tok('new')))
   T.eq(old.closed, {1000, 're-paired'}); T.eq(old.aborted, true); T.eq(#X.F.clients, 2); T.eq(X.app.client, X.F.clients[2])
   T.eq(X.F.clients[2].opts.headers, {{'Authorization', 'Bearer ' .. tok('new')}}); T.eq(X.config._stored.account_id, 'acc2')
