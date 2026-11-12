@@ -22,13 +22,13 @@
 
 ## What it does
 
-VanaTell is a Windower addon that sends your tells and linkshell chat to the VanaTell app on your Android phone, so you can step away from the PC and still answer.
+VanaTell is a Windower addon that sends your tells, party chat and linkshell chat to the VanaTell app on your Android phone, so you can step away from the PC and still answer.
 
-- **Tells, LS1 and LS2 on your phone.** Every tell you receive or send, and every LS1 and LS2 line, shows up in the app. Lines you type at the keyboard show up there too.
-- **Answer from the phone.** Send a tell, an LS1 line or an LS2 line from the app, and the addon types it in game for you.
+- **Tells, party, LS1 and LS2 on your phone.** Every tell you receive or send, and every party, LS1 and LS2 line, shows up in the app. Lines you type at the keyboard show up there too.
+- **Answer from the phone.** Send a tell, a party line, an LS1 line or an LS2 line from the app, and the addon types it in game for you.
 - **Linkshells detected for you.** The addon reads the name of the linkshell equipped in each slot, and whether a slot has one equipped at all, so the app files every line under the right shell.
 
-Say, party, shout, yell, emotes and system messages stay in game.
+Say, shout, yell, emotes and system messages stay in game.
 
 ## Nothing to configure
 
@@ -90,18 +90,18 @@ VanaTell: linkshells: 1=KupoKnights 2=(none)
 
 **Sent to the relay**
 
-- Each tell, LS1 and LS2 line: the channel, whether it came in or went out, who sent it, the tell target, the text, the time, and for linkshell lines the name of that linkshell.
+- Each tell, party, LS1 and LS2 line: the channel, whether it came in or went out, who sent it, the tell target, the text, the time, and for linkshell lines the name of that linkshell.
 - The names and colours of the linkshells equipped in slots 1 and 2, when they change.
 - A keepalive every 30 seconds.
 
 **Never sent**
 
-- Say, party, shout, yell, emotes or system messages.
+- Say, shout, yell, emotes or system messages.
 - Your inventory, gil, position, job or anything else from the game.
 
 **What the phone can do in game**
 
-- Only `/tell`, `/l` and `/l2`. No other game or Windower command can come from the phone, and text starting with `/` is refused.
+- Only `/tell`, `/p`, `/l` and `/l2`. No other game or Windower command can come from the phone, and text starting with `/` is refused.
 - Text is cut at 150 bytes, `;` becomes `,`, and anything outside plain ASCII shows as `?`.
 
 **On your PC**
@@ -109,7 +109,7 @@ VanaTell: linkshells: 1=KupoKnights 2=(none)
 - `addons/vanatell/data/settings.xml` holds the relay address and this PC's pairing token in plain text. Treat it like a password. `//vt unpair` wipes the token.
 - Lines that arrive while the relay is out of reach wait in memory, up to 500, and are never written to disk.
 
-Everything travels over an encrypted connection, and the addon checks the relay's certificate against the bundled Mozilla CA list.
+Everything travels over an encrypted connection, and the addon checks the relay's certificate against the small list of trust roots in `relay-roots.txt`. That file is not a certificate to install; it is only read by the addon.
 
 ## Troubleshooting
 

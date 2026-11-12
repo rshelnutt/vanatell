@@ -26,7 +26,7 @@ ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ]]
 
--- vanatell: relays FFXI tells and linkshell chat to a phone through the relay.
+-- vanatell: relays FFXI tells, party and linkshell chat to a phone through the relay.
 -- This file holds the Windower events, the //vt commands (pairing among
 -- them), the settings, the connection lifecycle (connect, ping, idle timeout
 -- and reconnect with backoff), chat capture with its offline queue, the
@@ -66,7 +66,7 @@ local LS_ZONE_SETTLE = 5  -- wait after zone-in or login, while the inventory lo
 local LS_INVENTORY_SETTLE = 0.5 -- wait after the inventory finished loading (0x01D)
 
 local PING = '{"type":"ping"}'
-local CA_FILE = windower.addon_path .. 'cacert.pem'
+local CA_FILE = windower.addon_path .. 'relay-roots.txt'
 
 -- Saved with 'all': the default per-character save does nothing while the
 -- player is not logged in.
@@ -169,7 +169,9 @@ local function encode_fields(fields)
 end
 
 -- ls1 and ls2 frames name the shell the last linkshell read found in that
--- slot, or null when it is not known; tell frames have no linkshell key.
+-- slot, or null when it is not known. Party lines are group lines like
+-- linkshell lines (a sender, a null target) but, like tells, have no
+-- linkshell key.
 local function linkshell_name(channel)
   if channel ~= 'ls1' and channel ~= 'ls2' then return nil end
   local shell = app.ls.current and app.ls.current[channel]
@@ -515,6 +517,7 @@ local function normalise_url(raw)
 end
 
 local HELP = {
+  'relays tells, party, LS1 and LS2 chat to the VanaTell app',
   'commands:',
   '//vt url <wss://host> | default - use another relay, or the built-in one',
   '//vt pair <code> - pair with the code shown on your phone',

@@ -22,6 +22,15 @@ How a release is cut (no scripts needed):
 
 ## [Unreleased]
 
+### Changed
+- The trust-root bundle is trimmed to the roots the relay can chain to and renamed `relay-roots.txt`, so phones and PCs no longer offer to install it.
+
+### Added
+
+- Party chat on your phone: every party line you receive or send is relayed
+  to the VanaTell app, and a party line sent from the app is typed in game
+  with `/p`. `//vt help` lists party among the relayed channels.
+
 ## [0.1.0] - 2026-11-12
 
 ### Added

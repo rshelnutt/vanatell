@@ -27,16 +27,19 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ]]
 
 -- Chat for vanatell: parses the 0x017 (incoming chat), 0x0B5 (outgoing
--- linkshell) and 0x0B6 (outgoing tell) packets, sanitises game text for the
--- relay, and validates phone text before it becomes a game command.
+-- party and linkshell) and 0x0B6 (outgoing tell) packets, sanitises game text
+-- for the relay, and validates phone text before it becomes a game command.
 -- Packet strings are 1-indexed, so Lua byte N is packet offset N - 1.
+-- Chat modes are the game's (Windower's res.chat ids): 3 tell, 4 party,
+-- 5 linkshell, 27 linkshell 2. Say, shout, yell, emotes, alliance and the
+-- rest are not carried.
 local chat = {}
 
 chat.MAX_TEXT = 150
 
-local INCOMING_CHANNELS = {[3] = 'tell', [5] = 'ls1', [27] = 'ls2'}
-local OUTGOING_LS_CHANNELS = {[5] = 'ls1', [27] = 'ls2'}
-local SEND_PREFIXES = {tell = 'input /tell ', ls1 = 'input /l ', ls2 = 'input /l2 '}
+local INCOMING_CHANNELS = {[3] = 'tell', [4] = 'party', [5] = 'ls1', [27] = 'ls2'}
+local OUTGOING_GROUP_CHANNELS = {[4] = 'party', [5] = 'ls1', [27] = 'ls2'}
+local SEND_PREFIXES = {tell = 'input /tell ', party = 'input /p ', ls1 = 'input /l ', ls2 = 'input /l2 '}
 
 local function is_name(s)
   return type(s) == 'string' and #s >= 3 and #s <= 15 and s:find('^[A-Za-z]+$') ~= nil
@@ -104,8 +107,8 @@ function chat.sanitize(raw)
   return text
 end
 
--- Raw 0x017 packet -> {channel, sender, text}, or nil if it is not a tell or
--- linkshell line the relay carries.
+-- Raw 0x017 packet -> {channel, sender, text}, or nil if it is not a tell,
+-- party or linkshell line the relay carries.
 function chat.parse_incoming(data)
   if type(data) ~= 'string' or #data < 24 then return nil end
   local channel = INCOMING_CHANNELS[data:byte(5)]
@@ -122,7 +125,7 @@ function chat.parse_outgoing(id, data)
   if type(data) ~= 'string' then return nil end
   if id == 0x0B5 then
     if #data < 7 then return nil end
-    local channel = OUTGOING_LS_CHANNELS[data:byte(5)]
+    local channel = OUTGOING_GROUP_CHANNELS[data:byte(5)]
     if not channel then return nil end
     local text = chat.sanitize(data:sub(7))
     if not text then return nil end
@@ -138,7 +141,8 @@ function chat.parse_outgoing(id, data)
   return nil
 end
 
--- Phone text -> (game command, clean text), or (nil, err). The command is the
+-- Phone text -> (game command, clean text), or (nil, err). Only a tell has a
+-- target; party and linkshell sends ignore it. The command is the
 -- only string that reaches windower.send_command, so the clean text holds
 -- only printable ASCII, no ';' (Windower splits commands on it), and never
 -- starts with '/' or a space.
