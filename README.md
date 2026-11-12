@@ -1,6 +1,6 @@
 # vanatell
 
-A Windower 4 addon that carries your FFXI chat to the XI Relay app on your
+A Windower 4 addon that carries your FFXI chat to the VanaTell app on your
 Android phone, and lets you answer from the phone. It talks to your own relay
 over a secure WebSocket.
 
