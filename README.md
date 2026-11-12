@@ -16,7 +16,10 @@ Tells, LS1 and LS2 only.
 
 ## Install
 
-1. Copy the `vanatell` folder to `Windower4/addons/vanatell`.
+1. Get the addon into `Windower4/addons/vanatell`, either way:
+   - `git clone https://github.com/rshelnutt/vanatell-addon.git Windower4/addons/vanatell`
+   - or download the repo as a zip and unzip its contents into `Windower4/addons/vanatell`,
+     so that `Windower4/addons/vanatell/vanatell.lua` exists.
 2. In game, run `//lua load vanatell`. To load it automatically, add
    `lua load vanatell` to `Windower4/scripts/init.txt`.
 
