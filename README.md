@@ -52,7 +52,7 @@ The relay address is built in. There is no server to set up and no settings file
 Until it is paired, loading it prints:
 
 ```
-vanatell: not paired: run //vt pair <code> with the code from the VanaTell app
+VanaTell: not paired: run //vt pair <code> with the code from the VanaTell app
 ```
 
 ## Pair
@@ -68,22 +68,22 @@ To pair again later, open **Settings** in the app and tap **Generate new pairing
 | Command | What it does |
 | --- | --- |
 | `//vt pair CODE` | Pair with the code shown in the app |
-| `//vt status` | Show the relay address, pairing, connection, queued messages and linkshells |
+| `//vt status` | Show the version, pairing, connection, queued messages and linkshells |
 | `//vt on` / `//vt off` | Start or stop relaying |
 | `//vt unpair` | Forget this PC's pairing |
 | `//vt help` | List the commands in game |
-| `//vt url wss://host` | Advanced: use your own relay instead of the built-in one |
+| `//vt url wss://host` | Advanced: use your own relay. `//vt url default` goes back to the built-in one |
 
 `//vt status` prints, for example:
 
 ```
-vanatell: version: 0.1.0
-vanatell: relay url: wss://vanatell.rob-shelnutt.workers.dev
-vanatell: paired: yes (account ...)
-vanatell: enabled: yes
-vanatell: connection: connected
-vanatell: queued: 0
-vanatell: linkshells: 1=KupoKnights 2=(none)
+VanaTell: version: 0.1.0
+VanaTell: relay: built-in
+VanaTell: paired: yes (account ...)
+VanaTell: enabled: yes
+VanaTell: connection: connected
+VanaTell: queued: 0
+VanaTell: linkshells: 1=KupoKnights 2=(none)
 ```
 
 ## What is sent and what is not
@@ -115,7 +115,7 @@ Everything travels over an encrypted connection, and the addon checks the relay'
 
 **`//lua load vanatell` says the addon does not exist.** The folder must be named exactly `vanatell`, with `vanatell.lua` directly inside it: `Windower4/addons/vanatell/vanatell.lua`. A zip from GitHub's **Code** button unzips as `vanatell-main`; rename it to `vanatell`.
 
-**`pairing failed: http 404`.** The addon is using an old relay address saved in `data/settings.xml`. Type `//vt url wss://vanatell.rob-shelnutt.workers.dev`, then `//vt pair CODE` again.
+**`pairing failed: http 404`.** The addon is using an old relay address saved in `data/settings.xml`. Type `//vt url default`, then `//vt pair CODE` again.
 
 **`pairing failed: invalid_code`.** The code was mistyped, has run out or was already used. Get a new one in the app.
 

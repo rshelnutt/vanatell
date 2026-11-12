@@ -140,7 +140,7 @@ end
 -- The game's chat log is Shift-JIS, so anything outside printable ASCII
 -- (an error from the network, say) is shown as '?'.
 local function log(line)
-  windower.add_to_chat(207, 'vanatell: ' .. (line:gsub('[^ -~]', '?')))
+  windower.add_to_chat(207, 'VanaTell: ' .. (line:gsub('[^ -~]', '?')))
 end
 ws.log = log -- ws.lua's one-time notices, such as a TLS options fallback
 
@@ -516,7 +516,7 @@ end
 
 local HELP = {
   'commands:',
-  '//vt url <wss://host> - set the relay address',
+  '//vt url <wss://host> | default - use another relay, or the built-in one',
   '//vt pair <code> - pair with the code shown on your phone',
   '//vt status - show the connection state',
   '//vt on | //vt off - start or stop relaying',
@@ -542,12 +542,14 @@ local commands = {}
 -- Windower splits arguments on spaces; they are joined back so a url with a
 -- space in it is rejected rather than cut short.
 function commands.url(...)
-  local url, err = normalise_url(table.concat({...}, ' '))
+  local raw = table.concat({...}, ' ')
+  local url, err
+  if raw == 'default' then url = DEFAULT_URL else url, err = normalise_url(raw) end
   if not url then return log('invalid url: ' .. err) end
   cancel_pairing()
   settings.url = url
   save()
-  log('relay url set to ' .. url)
+  log(url == DEFAULT_URL and 'relay: built-in' or ('relay url set to ' .. url))
   if has_credentials() and is_enabled() then
     drop_client(1000, 'url changed')
     start()
@@ -599,7 +601,7 @@ end
 
 function commands.status()
   log('version: ' .. _addon.version)
-  log('relay url: ' .. (is_set(settings.url) and settings.url or 'not set'))
+  log(settings.url == DEFAULT_URL and 'relay: built-in' or ('relay url: ' .. (is_set(settings.url) and settings.url or 'not set')))
   if is_token(settings.token) then
     log('paired: yes (account ' .. (is_set(settings.account_id) and settings.account_id or 'unknown') .. ')')
   else
