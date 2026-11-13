@@ -12,7 +12,7 @@ in this folder for what you may and may not do with it.
 -- slots 1 and 2). All network work is pumped from prerender and never blocks.
 _addon.name = 'vanatell'
 _addon.command = 'vt'
-_addon.version = '0.1.2'
+_addon.version = '0.2.0'
 
 local config = require('config')
 

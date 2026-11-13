@@ -10,17 +10,35 @@ How a release is cut (no scripts needed):
 
 1. Move the entries under [Unreleased] into a new "## [X.Y.Z] - YYYY-MM-DD"
    section, add its compare link at the bottom, and set
-   _addon.version = 'X.Y.Z' in vanatell.lua. Commit.
+   _addon.version = 'X.Y.Z' in vanatell.lua and addon.version = 'X.Y.Z' in
+   ashita/vanatell.lua. Commit.
 2. Tag that commit: git tag vX.Y.Z
-3. Zip the shipped files into a vanatell/ folder:
+3. Zip the shipped files into a vanatell/ folder for Windower (git archive
+   leaves out tools/ and ashita/, as .gitattributes says):
    git archive --format=zip --prefix=vanatell/ -o vanatell-vX.Y.Z.zip vX.Y.Z
    The zip then holds exactly the addon folder as tagged.
-4. Push the commit and the tag, create a GitHub release for vX.Y.Z on the
+4. Zip the Ashita addon: the same files in a vanatell/ folder, with
+   vanatell.lua renamed main.lua and ashita/vanatell.lua as vanatell.lua:
+   B=$(mktemp -d) && mkdir "$B/vanatell"
+   git archive vX.Y.Z | tar -x -C "$B/vanatell"
+   mv "$B/vanatell/vanatell.lua" "$B/vanatell/main.lua"
+   git show vX.Y.Z:ashita/vanatell.lua > "$B/vanatell/vanatell.lua"
+   (cd "$B" && zip -qrX - vanatell) > vanatell-ashita-vX.Y.Z.zip
+5. Push the commit and the tag, create a GitHub release for vX.Y.Z on the
    Releases page, paste this version's section as the notes, and attach
-   vanatell-vX.Y.Z.zip.
+   vanatell-vX.Y.Z.zip and vanatell-ashita-vX.Y.Z.zip.
 -->
 
 ## [Unreleased]
+
+## [0.2.0] - 2026-11-13
+
+### Added
+
+- VanaTell for Ashita v4: the same tells, party and linkshell chat, pairing
+  and commands for Ashita players, with each command typed with one slash
+  (`/vt pair CODE`). Unzip `vanatell-ashita-v0.2.0.zip` into `Ashita/addons/`
+  and type `/addon load vanatell`.
 
 ## [0.1.2] - 2026-11-12
 
@@ -64,7 +82,8 @@ How a release is cut (no scripts needed):
 - Case-insensitive pair codes: upper or lower case both work, and dashes or
   spaces copied from the phone are ignored.
 
-[Unreleased]: https://github.com/rshelnutt/vanatell/compare/v0.1.2...HEAD
+[Unreleased]: https://github.com/rshelnutt/vanatell/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/rshelnutt/vanatell/releases/tag/v0.2.0
 [0.1.2]: https://github.com/rshelnutt/vanatell/releases/tag/v0.1.2
 [0.1.1]: https://github.com/rshelnutt/vanatell/releases/tag/v0.1.1
 [0.1.0]: https://github.com/rshelnutt/vanatell/releases/tag/v0.1.0
