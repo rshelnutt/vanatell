@@ -5,8 +5,10 @@ in this folder for what you may and may not do with it.
 ]]
 
 -- Linkshells for vanatell: which linkshell is equipped in slot 1 and slot 2,
--- worked out from game data passed in (so it runs outside the game too),
--- and the linkshell equip packet (0x0E0) that says which item went where.
+-- worked out from game data passed in (so it runs outside the game too), the
+-- linkshell equip packet (0x0E0) that says which item went where, and the
+-- linkshell message packet (0x0CC), the reply to /lsmes and /ls2mes, which
+-- names the linkshell in the slot that was asked.
 -- Packet strings are 1-indexed, so Lua byte N is packet offset N - 1.
 local M = {}
 
@@ -49,51 +51,59 @@ end
 local OTHER = {ls1 = 'ls2', ls2 = 'ls1'}
 local SLOT = {[1] = 'ls1', [2] = 'ls2'}
 
--- player = windower.ffxi.get_player(): player.linkshell names the shell in
---   slot 1 ('' or nil when none), and player.linkshell_slot is that shell's
---   inventory slot.
+-- The equipped shells, in bag and slot order.
+-- player = windower.ffxi.get_player(): player.linkshell names a shell the
+--   game has equipped ('' or nil when none), and player.linkshell_slot is
+--   that shell's inventory slot.
 -- bags = windower.ffxi.get_items(), bags keyed by number or by name.
 -- decode = extdata.decode.
--- equips = {['bag:slot'] = 1 or 2}, from the 0x0E0 packets seen.
--- -> {ls1 = {name =, color =} | nil, ls2 = ...}
+-- equips = {['bag:slot'] = 1 or 2}: the slot number the game gave an item, in
+--   a 0x0E0 packet or a linkshell message.
+-- -> {{key = 'bag:slot', shell = {name =, color =}}, ...}
 -- An item counts as an equipped shell when the game flags it so (status 19),
--- when a 0x0E0 named its bag and slot, or when it is the inventory item at
--- player.linkshell_slot and carries player.linkshell's name. The game does
--- not flag every equipped shell 19 (a leader's Linkshell in slot 1 and a
--- pearl in slot 2 have been seen with another status), so the packet and the
--- player's own slot are trusted over the status. Any other status, a shell
--- set for sale in the bazaar (25) among them, is not equipped.
--- A shell the equips map places goes to that slot. Otherwise the shell named
--- in player.linkshell is ls1 and any other is ls2. Two shells never share a
--- slot: when the slot a shell would take holds a shell the equips map placed,
--- it takes the other slot; when it holds one placed by name, it is left out.
-function M.detect(player, bags, decode, equips)
+-- when the equips map names its bag and slot, or when it is the inventory
+-- item at player.linkshell_slot and carries player.linkshell's name. Any
+-- other status, a shell set for sale in the bazaar (25) among them, is not
+-- equipped. Whether the item is a linkshell, a pearlsack or a linkpearl says
+-- nothing about which slot it is in.
+function M.equipped(player, bags, decode, equips)
   equips = type(equips) == 'table' and equips or {}
   local primary = type(player) == 'table' and player.linkshell or nil
   local primary_slot = type(player) == 'table' and tonumber(player.linkshell_slot) or nil
   local found = {}
-  if type(bags) == 'table' then
-    for _, b in ipairs(M.BAGS) do
-      local id, key = b[1], b[2]
-      local items = bags[id] or bags[key]
-      if type(items) == 'table' then
-        for slot = 1, BAG_SLOTS do
-          local item = items[slot]
-          local where = id .. ':' .. slot
-          local at_primary = id == 0 and slot == primary_slot
-          if type(item) == 'table' and (item.status == M.EQUIPPED or SLOT[equips[where]] or at_primary) then
-            local shell = read_shell(decode, item)
-            -- The item at player.linkshell_slot counts only if it is the shell player.linkshell names.
-            if shell and at_primary and item.status ~= M.EQUIPPED and not SLOT[equips[where]] and shell.name ~= primary then
-              shell = nil
-            end
-            if shell then found[#found + 1] = {key = where, shell = shell} end
+  if type(bags) ~= 'table' then return found end
+  for _, b in ipairs(M.BAGS) do
+    local id, key = b[1], b[2]
+    local items = bags[id] or bags[key]
+    if type(items) == 'table' then
+      for slot = 1, BAG_SLOTS do
+        local item = items[slot]
+        local where = id .. ':' .. slot
+        local at_primary = id == 0 and slot == primary_slot
+        if type(item) == 'table' and (item.status == M.EQUIPPED or SLOT[equips[where]] or at_primary) then
+          local shell = read_shell(decode, item)
+          -- The item at player.linkshell_slot counts only if it is the shell player.linkshell names.
+          if shell and at_primary and item.status ~= M.EQUIPPED and not SLOT[equips[where]] and shell.name ~= primary then
+            shell = nil
           end
+          if shell then found[#found + 1] = {key = where, shell = shell} end
         end
       end
     end
   end
+  return found
+end
 
+-- found = M.equipped(...) -> {ls1 = {name =, color =} | nil, ls2 = ...}
+-- A shell the equips map places goes to that slot. For the rest the game
+-- gives no slot number, so the shell named in player.linkshell is ls1 and
+-- any other ls2, until the game says otherwise.
+-- Two shells never share a slot: when the slot a shell would take holds a
+-- shell the equips map placed, it takes the other slot; when it holds one
+-- placed by name, it is left out.
+function M.assign(found, player, equips)
+  equips = type(equips) == 'table' and equips or {}
+  local primary = type(player) == 'table' and player.linkshell or nil
   local result, mapped, placed = {}, {}, {}
   for i, f in ipairs(found) do
     local slot = SLOT[equips[f.key]]
@@ -112,6 +122,11 @@ function M.detect(player, bags, decode, equips)
     end
   end
   return result
+end
+
+-- -> {ls1 = {name =, color =} | nil, ls2 = ...}
+function M.detect(player, bags, decode, equips)
+  return M.assign(M.equipped(player, bags, decode, equips), player, equips)
 end
 
 -- True when get_items() shows the inventory loaded: the bag is there, not
@@ -149,6 +164,90 @@ function M.note_equip(equips, data)
   end
   if slot ~= 0 then equips[bag .. ':' .. slot] = number end
   return true
+end
+
+-- Gives a slot number to the item at key ('bag:slot'): the number now
+-- belongs to that item alone.
+function M.place(equips, key, number)
+  for k, n in pairs(equips) do
+    if n == number then equips[k] = nil end
+  end
+  equips[key] = number
+end
+
+-- A name without the apostrophes that end it: the padding after a short name
+-- in a linkshell message can read as apostrophes.
+local function bare(name)
+  return (name:gsub("'+$", ''))
+end
+
+-- The game said the linkshell called one of names is in slot number (1 or
+-- 2): places that shell in the equips map and, when it is one of exactly two
+-- equipped shells, the other one in the other slot. found = M.equipped(...).
+-- -> true when exactly one equipped shell has one of the names.
+function M.confirm(equips, found, names, number)
+  if type(names) == 'string' then names = {names} end
+  if type(names) ~= 'table' or (number ~= 1 and number ~= 2) then return false end
+  local wanted = {}
+  for _, name in ipairs(names) do if type(name) == 'string' then wanted[bare(name)] = true end end
+  local match, other
+  for _, f in ipairs(found) do
+    if wanted[bare(f.shell.name)] then
+      if match then return false end
+      match = f
+    else
+      other = f
+    end
+  end
+  if not match then return false end
+  M.place(equips, match.key, number)
+  if #found == 2 then M.place(equips, other.key, 3 - number) end
+  return true
+end
+
+-- What is equipped, as one string: it changes when a shell or its bag slot does.
+function M.signature(found)
+  local parts = {}
+  for i, f in ipairs(found) do parts[i] = f.key .. '=' .. f.shell.name end
+  table.sort(parts)
+  return table.concat(parts, ',')
+end
+
+-- 0x0CC, Linkshell Message, the reply to /lsmes and /ls2mes: its last field
+-- is the linkshell's name, 15 bytes packed as an item's linkshell name is: 6
+-- bits a character, most significant bit first, 0 the apostrophe, 1 to 26 a
+-- to z, 27 to 52 A to Z, and any other value ends the name. Windower's packet
+-- notes put the field at 0x9C, its field sizes at 0xA0; both put it last, so
+-- it is read at all three places: 16 bytes before the end, 0x9C and 0xA0.
+-- -> the distinct names read, as a list (empty when none reads as a name)
+local NAME_BYTES = 15
+local NAME_CHARS = "'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+
+local function name_at(data, at)
+  local out, bit = {}, 0
+  while #out < M.NAME_MAX and bit + 6 <= NAME_BYTES * 8 do
+    local v = 0
+    for i = bit, bit + 5 do
+      local b = data:byte(at + 1 + math.floor(i / 8)) or 0
+      v = v * 2 + math.floor(b / 2 ^ (7 - i % 8)) % 2
+    end
+    if v > 52 then break end
+    out[#out + 1] = NAME_CHARS:sub(v + 1, v + 1)
+    bit = bit + 6
+  end
+  local name = bare(table.concat(out))
+  if is_name(name) then return name end
+  return nil
+end
+
+function M.message_names(data)
+  local names, seen = {}, {}
+  if type(data) ~= 'string' or #data < 0x9C + NAME_BYTES then return names end
+  for _, at in ipairs({#data - 16, 0x9C, 0xA0}) do
+    local name = at >= 0 and at + NAME_BYTES <= #data and name_at(data, at)
+    if name and not seen[name] then seen[name], names[#names + 1] = true, name end
+  end
+  return names
 end
 
 -- The equips map kept per character in the settings, so a reload starts with

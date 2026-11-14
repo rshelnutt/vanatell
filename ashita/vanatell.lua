@@ -25,7 +25,7 @@ in this folder for what you may and may not do with it.
 -- main.lua is the Windower addon's vanatell.lua.
 addon.name    = 'vanatell'
 addon.author  = 'Rob Shelnutt'
-addon.version = '0.3.1'
+addon.version = '0.3.2'
 addon.desc    = 'Relays tells, party and linkshell chat to the VanaTell app.'
 addon.link    = 'https://github.com/rshelnutt/vanatell'
 
@@ -51,7 +51,8 @@ local function add_to_chat(mode, text)
 end
 
 -- The addon types chat into the game, as 'input /tell ...', 'input /p ...',
--- 'input /l ...' or 'input /l2 ...', and after an update or a rollback asks
+-- 'input /l ...' or 'input /l2 ...', asks which linkshell is in which slot
+-- with 'input /lsmes' and 'input /ls2mes', and after an update or a rollback asks
 -- for 'lua reload vanatell', which is Ashita's /addon reload vanatell, run
 -- by Ashita itself (CommandMode.AshitaParse, -1). Nothing else is passed on.
 local function send_command(command)
@@ -151,11 +152,9 @@ end
 -- Windower's player.linkshell names the shell in slot 1 and
 -- player.linkshell_slot is its inventory slot. Ashita has neither, but the game
 -- gives the player its slot 1 shell's colour (IEntity:GetLinkshellColor,
--- 0xBBGGRR), so the slot 1 shell is the shell of that colour. The game does
--- not flag every equipped shell 19 (a leader's Linkshell has been seen with
--- another status), so any shell of that colour counts except one set for sale
--- in the bazaar (25): one flagged 19 first, then any other flagged, then an
--- unflagged one. Shells of that colour with different names, or none, leave
+-- 0xBBGGRR), so the slot 1 shell is the shell of that colour. Any shell of
+-- that colour counts except one set for sale in the bazaar (25): one flagged
+-- 19 first, then any other flagged, then an unflagged one. Shells of that colour with different names, or none, leave
 -- it unknown. -> name, inventory slot (nil when the shell is in a wardrobe) | nil
 local BAZAAR = 25
 local function slot1(index)
@@ -283,8 +282,11 @@ local ASHITA_EVENTS = {
   load = function(fn) on('load', function() fn() end) end,
   unload = function(fn) on('unload', function() fn() end) end,
   prerender = function(fn) on('d3d_present', function() fn() end) end,
+  -- A handler that returns true blocks the packet, as on Windower.
   ['incoming chunk'] = function(fn)
-    on('packet_in', function(e) fn(e.id, e.data, e.data_modified, e.injected, e.blocked) end)
+    on('packet_in', function(e)
+      if fn(e.id, e.data, e.data_modified, e.injected, e.blocked) == true then e.blocked = true end
+    end)
   end,
   ['outgoing chunk'] = function(fn)
     on('packet_out', function(e) fn(e.id, e.data, e.data_modified, e.injected, e.blocked) end)

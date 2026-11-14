@@ -26,7 +26,7 @@ VanaTell is a Windower and Ashita addon that sends your tells, party chat and li
 
 - **Tells, party, LS1 and LS2 on your phone.** Every tell you receive or send, and every party, LS1 and LS2 line, shows up in the app. Lines you type at the keyboard show up there too.
 - **Answer from the phone.** Send a tell, a party line, an LS1 line or an LS2 line from the app, and the addon types it in game for you.
-- **Linkshells detected for you.** The addon reads the name of the linkshell equipped in each slot, and whether a slot has one equipped at all, so the app files every line under the right shell.
+- **Linkshells detected for you.** The addon reads the name of the linkshell equipped in each slot, and whether a slot has one equipped at all, so the app files every line under the right shell. Which slot a shell is in comes only from the game: its equip message when you zone or equip a shell, or, when the addon loads mid-session, the game's reply to `/lsmes` and `/ls2mes`, which the addon types for you and keeps out of your chat log. It never guesses.
 
 Japanese chat is carried both ways: Japanese lines show on your phone as written, and Japanese you type on the phone reaches the game.
 
@@ -150,7 +150,9 @@ Everything travels over an encrypted connection, and the addon checks the relay'
 
 **`pairing failed: invalid_code`.** The code was mistyped, has run out or was already used. Get a new one in the app.
 
-**Linkshell lines are missing, or status shows `linkshells: 1=(none)`.** That slot has no linkshell equipped. Equip the linkshell or pearl from your inventory or a wardrobe and the addon picks it up within a few seconds. `linkshells: unknown` means you are not logged in yet, or the game is still loading your inventory after a zone change.
+**Linkshell lines are missing, or status shows `linkshells: 1=(none)`.** That slot has no linkshell equipped. Equip the linkshell from your inventory, Mog Satchel, Sack or Case and the addon picks it up within a few seconds. `linkshells: unknown` means you are not logged in yet, or the game is still loading your inventory after a zone change.
+
+**Status shows `linkshells: Regalia, MyPearl (slots not known yet)`.** The game has not said which slot each shell is in. The addon asked with `/lsmes` and `/ls2mes` and got no reply, which happens when neither linkshell has a message set. Until the game says, linkshell lines arrive in the app under "Unknown linkshell" and a reply to a linkshell from the phone fails rather than go to the wrong one. Zone or equip a shell again and the lines move to the right linkshell.
 
 **`relay rejected the addon token`.** This PC's pairing was replaced or revoked. Get a new code in the app and type `//vt pair CODE` (on Ashita, `/vt pair CODE`).
 

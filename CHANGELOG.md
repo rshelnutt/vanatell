@@ -36,6 +36,31 @@ The zips, as the tool builds them:
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-11-14
+
+### Fixed
+
+- Linkshell 1 and 2 are never guessed. Which slot a shell is in now comes
+  only from the game: its equip message when you zone or equip a shell, or,
+  when the addon loads mid-session, the game's reply to `/lsmes` and then
+  `/ls2mes`, which the addon types for you and keeps out of your chat log.
+  Linkshell lines wait up to 1.5 seconds for that reply so they are filed
+  under the right shell. With one shell equipped, its first line says its
+  slot. If the game never says (no linkshell message set on either shell),
+  lines arrive under "Unknown linkshell" and move to the right one once you
+  zone or equip a shell; they are never filed under the wrong one.
+- A reply from the phone to a linkshell is typed in the slot the game says
+  that linkshell is in, and never in a guessed one: if the game has not said,
+  the addon asks it first, and the reply fails rather than reach the wrong
+  linkshell.
+- `//vt update` says which version it found as soon as it finds it:
+  `VanaTell: update 0.3.3 found, applying...`, before it checks your files.
+
+### Changed
+
+- `//vt status` lists shells whose slots the game has not said as
+  `linkshells: Regalia, MyPearl (slots not known yet)`.
+
 ## [0.3.1] - 2026-11-13
 
 ### Fixed
@@ -64,7 +89,7 @@ The zips, as the tool builds them:
 
 - A linkshell equipped from your Mog Satchel, Sack or Case now shows on the
   phone. The addon only looked in your inventory (and the wardrobes, which never
-  hold linkshells), so a pearl worn from the satchel was never found: the phone
+  hold linkshells), so a shell worn from the satchel was never found: the phone
   showed no linkshell in that slot and its lines arrived as an unknown
   linkshell you could not reply to.
 
@@ -77,7 +102,7 @@ The zips, as the tool builds them:
   The addon now waits until what it reads has stayed the same for 10 seconds
   before it tells the phone, and keeps checking for two minutes, so the phone
   never shows a wrong slot and settles on the right one without re-equipping.
-- Ashita: a leader's Linkshell in slot 1 is found as soon as the addon loads,
+- Ashita: the linkshell in slot 1 is found as soon as the addon loads,
   as on Windower, instead of only after a zone or a re-equip.
 
 ### Added
@@ -90,11 +115,10 @@ The zips, as the tool builds them:
 ### Fixed
 
 - Linkshells: a linkshell the game does not mark the usual way is now found.
-  A leader's Linkshell in slot 1 and some pearls in slot 2 read as "no
-  linkshell equipped", so their chat landed under "Unknown linkshell" on the
-  phone and could not be answered. On Windower slot 1 now shows as soon as
-  the addon loads; slot 2 (and, on Ashita, either slot) shows after you zone
-  or equip the pearl again.
+  Some equipped linkshells read as "no linkshell equipped", so their chat
+  landed under "Unknown linkshell" on the phone and could not be answered.
+  On Windower slot 1 now shows as soon as the addon loads; slot 2 (and, on Ashita, either slot) shows after you zone
+  or equip the linkshell again.
 
 ## [0.2.0] - 2026-11-13
 
@@ -147,7 +171,8 @@ The zips, as the tool builds them:
 - Case-insensitive pair codes: upper or lower case both work, and dashes or
   spaces copied from the phone are ignored.
 
-[Unreleased]: https://github.com/rshelnutt/vanatell/compare/v0.3.1...HEAD
+[Unreleased]: https://github.com/rshelnutt/vanatell/compare/v0.3.2...HEAD
+[0.3.2]: https://github.com/rshelnutt/vanatell/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/rshelnutt/vanatell/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/rshelnutt/vanatell/releases/tag/v0.3.0
 [0.2.3]: https://github.com/rshelnutt/vanatell/releases/tag/v0.2.3

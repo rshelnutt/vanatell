@@ -9,11 +9,12 @@ in this folder for what you may and may not do with it.
 -- them), the settings, the connection lifecycle (connect, ping, idle timeout
 -- and reconnect with backoff), chat capture with its offline queue, the
 -- phone's send frames, the linkshells frame (which shell is equipped in
--- slots 1 and 2), and the update check and //vt update (update.lua). All
--- network work is pumped from prerender and never blocks.
+-- slots 1 and 2, asked of the game with /lsmes and /ls2mes when it has not
+-- said), and the update check and //vt update (update.lua). All network work
+-- is pumped from prerender and never blocks.
 _addon.name = 'vanatell'
 _addon.command = 'vt'
-_addon.version = '0.3.1'
+_addon.version = '0.3.2'
 
 local config = require('config')
 
@@ -50,6 +51,16 @@ local LS_INVENTORY_SETTLE = 0.5 -- wait after the inventory finished loading (0x
 local LS_WATCH = 120
 local LS_RECHECK = 2
 local LS_SETTLE = 10
+-- The game gives no slot number for an equipped shell except in a 0x0E0
+-- packet (on equipping, and for both slots on zone-in) and in the reply to
+-- /lsmes (slot 1) and /ls2mes (slot 2), which names the linkshell in that
+-- slot. A linkshell line is only ever named by what the game said: until it
+-- has, the addon asks with those commands, and keeps their replies out of
+-- the chat log.
+local LS_LOOKUP_HOLD = 1.5  -- seconds linkshell lines wait for the first reply
+local LS_LOOKUP_WAIT = 5    -- seconds a command's reply is waited for before the next command
+local LS_HELD_MAX = 200     -- linkshell lines held while they wait
+local LS_LOOKUP = {'input /lsmes', 'input /ls2mes'}
 
 local PING = '{"type":"ping"}'
 local CA_FILE = windower.addon_path .. 'relay-roots.txt'
@@ -81,7 +92,17 @@ local app = {
   outage = false,      -- a connection was lost and none has opened since
   opened_at = nil, last_rx = nil, last_ping = nil,
   ls = {               -- linkshell detection
-    equips = {},       -- 'bag:slot' -> 1 or 2, from the 0x0E0 packets since load or logout
+    equips = {},       -- 'bag:slot' -> 1 or 2, from 0x0E0 packets, /lsmes replies and the saved settings
+    said = {},         -- slot number -> true: the game said since load or login what is in it
+    known = false,     -- the game said which slot current's shells are in
+    found = nil,       -- the equipped shells current was read from (linkshells.equipped)
+    lookup = nil,      -- the /lsmes lookup in flight: {slot =, hold_until =, deadline =, found =, sig =}
+    looked = nil,      -- what was equipped at the last lookup that got no answer
+    swallow_until = 0, -- a linkshell message arriving before this time answers a command of ours: kept out of the log
+    held = {},         -- linkshell lines waiting for the lookup's first reply
+    held_sends = {},   -- the phone's linkshell sends waiting for the lookup to end
+    unnamed_from = nil, -- ms time of the first linkshell line sent with no name while the slots were not known
+    refile = nil,      -- ms time the next linkshells frame tells the relay to name lines from
     current = nil,     -- the last settled read, {ls1 =, ls2 =}; nil until one is
     seen = nil,        -- {state =, since =}: the last read, and when it was first read so
     watch_until = 0,   -- reads settle (LS_SETTLE) until this time, after login or zone-in
@@ -184,24 +205,37 @@ local function encode_fields(fields)
   return '{' .. table.concat(parts, ',') .. '}'
 end
 
--- ls1 and ls2 frames name the shell the last linkshell read found in that
--- slot, or null when it is not known. Party lines are group lines like
--- linkshell lines (a sender, a null target) but, like tells, have no
--- linkshell key.
-local function linkshell_name(channel)
+-- ls1 and ls2 frames name the shell the game said is in that slot, or null
+-- when it has not said: a line is never named by a guess. Party lines are
+-- group lines like linkshell lines (a sender, a null target) but, like
+-- tells, have no linkshell key. The first line sent with no name while
+-- shells are equipped is remembered by its time (ts, in ms): once the game
+-- says where those shells are, the relay is told to name the lines from
+-- that time on.
+local function linkshell_name(channel, ts)
   if channel ~= 'ls1' and channel ~= 'ls2' then return nil end
-  local shell = app.ls.current and app.ls.current[channel]
+  local ls = app.ls
+  if not ls.current then return NULL end
+  if not ls.known then
+    if not ls.unnamed_from and ls.found and #ls.found > 0 then ls.unnamed_from = ts end
+    return NULL
+  end
+  local shell = ls.current[channel]
   return shell and shell.name or NULL
 end
 
-local function chat_frame(channel, direction, sender, target, text)
-  return encode_fields{{'type', 'chat'}, {'channel', channel}, {'linkshell', linkshell_name(channel)},
+-- ts: when the line was captured, in ms; now when left out.
+local function chat_frame(channel, direction, sender, target, text, ts)
+  ts = ts or math.floor(now() * 1000)
+  return encode_fields{{'type', 'chat'}, {'channel', channel}, {'linkshell', linkshell_name(channel, ts)},
                        {'direction', direction}, {'sender', sender}, {'target', target}, {'text', text},
-                       {'ts', math.floor(now() * 1000)}}
+                       {'ts', ts}}
 end
 
-local function ack(client, id, ok, err)
-  client:send_text(encode_fields{{'type', 'ack'}, {'id', id}, {'ok', ok}, {'error', err}})
+-- channel: the slot a linkshell send was typed in, when it is not the one
+-- the relay asked for.
+local function ack(client, id, ok, err, channel)
+  client:send_text(encode_fields{{'type', 'ack'}, {'id', id}, {'ok', ok}, {'error', err}, {'channel', channel}})
 end
 
 local function player_name()
@@ -225,6 +259,25 @@ local function deliver(frame)
     end
     app.queue[#app.queue + 1] = frame
   end
+end
+
+local confirm_lone -- set with the linkshell lookup, below
+
+-- A captured chat line on its way to the relay. A linkshell line captured
+-- while the game is being asked which shell is in which slot waits up to
+-- LS_LOOKUP_HOLD for the answer, so it is named by it. With one shell
+-- equipped, a linkshell line itself says which slot that shell is in.
+local function relay_line(channel, direction, sender, target, text)
+  local ls = app.ls
+  if channel == 'ls1' or channel == 'ls2' then
+    if not ls.known then confirm_lone(channel) end
+    local look = ls.lookup
+    if look and now() < look.hold_until and #ls.held < LS_HELD_MAX then
+      ls.held[#ls.held + 1] = {channel, direction, sender, target, text, math.floor(now() * 1000)}
+      return
+    end
+  end
+  deliver(chat_frame(channel, direction, sender, target, text))
 end
 
 -- Drops expired echo entries; -> the live ones.
@@ -264,22 +317,57 @@ local function is_send_id(id)
   return type(id) == 'number' and id == id and id ~= math.huge and id ~= -math.huge and id >= 1 and id % 1 == 0
 end
 
+local OTHER_SLOT = {ls1 = 'ls2', ls2 = 'ls1'}
+local lookup_for_send -- set with the linkshell lookup, below
+
+local function slot_name(state, channel)
+  local shell = state and state[channel]
+  return shell and shell.name or nil
+end
+
 -- A send frame runs at most one game command per id and is always acked;
 -- the relay may replay an id after a reconnect.
-local function handle_send(client, frame)
+-- A linkshell send is for a linkshell, not a slot: the one the relay names
+-- (frame.linkshell), else the one this addon last told the relay is in the
+-- frame's slot. While the game has not said which shell is in which slot, the
+-- send waits for a lookup, and fails if the game still has not said: it is
+-- never typed in a slot that is a guess. It is typed in the slot the game
+-- said that linkshell is in, and the ack names that slot when it is not the
+-- frame's; a linkshell in neither slot fails the send. want: the linkshell,
+-- worked out when the frame first arrived (false: not known). looked: a
+-- lookup ran for this send already.
+local function handle_send(client, frame, want, looked)
   local id = frame.id
   if not is_send_id(id) then return end
   if app.executed[id] then return ack(client, id, true) end
   if not windower.ffxi.get_player() then return ack(client, id, false, 'not logged in') end
-  local command, text = chat.validate_send(frame.channel, frame.target, frame.text)
+  local channel = frame.channel
+  local command, text = chat.validate_send(channel, frame.target, frame.text)
   if not command then return ack(client, id, false, text) end
+  if channel == 'ls1' or channel == 'ls2' then
+    local ls = app.ls
+    if want == nil then want = is_set(frame.linkshell) and frame.linkshell or slot_name(ls.sent, channel) or false end
+    -- A send that names no linkshell is for the slot it gives.
+    if want then
+      if ls.lookup or (not ls.known and not looked and lookup_for_send()) then
+        ls.held_sends[#ls.held_sends + 1] = {frame = frame, want = want}
+        return
+      end
+      if not ls.known then return ack(client, id, false, 'linkshell slot not known') end
+      if slot_name(ls.current, channel) ~= want then
+        channel = OTHER_SLOT[channel]
+        if slot_name(ls.current, channel) ~= want then return ack(client, id, false, 'linkshell not equipped') end
+        command, text = chat.validate_send(channel, frame.target, frame.text)
+      end
+    end
+  end
   windower.send_command(command)
   remember_executed(id)
   local t = now()
   local echoes = live_echoes(t)
-  echoes[#echoes + 1] = {channel = frame.channel, target = frame.channel == 'tell' and frame.target:lower() or nil,
+  echoes[#echoes + 1] = {channel = channel, target = channel == 'tell' and frame.target:lower() or nil,
                          text = text, expires = t + ECHO_WINDOW}
-  ack(client, id, true)
+  ack(client, id, true, nil, channel ~= frame.channel and channel or nil)
 end
 
 ---------------------------------------------------------------------------
@@ -296,10 +384,11 @@ local function load_extdata()
   return extdata
 end
 
--- The linkshells equipped now, or nil while the game data cannot be read
--- (not logged in, or the inventory not loaded yet, say).
+-- The linkshells equipped now, then the equipped items they were read from
+-- (linkshells.equipped), or nil while the game data cannot be read (not
+-- logged in, or the inventory not loaded yet, say).
 local function read_linkshells()
-  local ok, state = pcall(function()
+  local ok, state, found = pcall(function()
     local player = windower.ffxi.get_player()
     if not player then return nil end
     local items = windower.ffxi.get_items()
@@ -310,9 +399,33 @@ local function read_linkshells()
       app.ls.equips_for = player.name
       if next(app.ls.equips) == nil then app.ls.equips = linkshells.load_equips(settings.ls_slots, player.name) end
     end
-    return linkshells.detect(player, items, extdata.decode, app.ls.equips)
+    local found = linkshells.equipped(player, items, extdata.decode, app.ls.equips)
+    return linkshells.assign(found, player, app.ls.equips), found
   end)
-  return ok and state or nil
+  if ok and state then return state, found end
+  return nil
+end
+
+-- True when the game has said, since load or login, which slot one of these
+-- shells is in (a second one is then in the other), or none is equipped: the
+-- game flags every equipped shell (status 19), so no flagged shell means
+-- both slots are empty.
+local function game_said(found)
+  local ls = app.ls
+  if #found == 0 then return true end
+  for _, f in ipairs(found) do
+    local n = ls.equips[f.key]
+    if n and ls.said[n] then return true end
+  end
+  return false
+end
+
+-- Keeps this character's slots in the settings, for the next load.
+local function save_slots()
+  local name = player_name()
+  if not name then return end
+  local saved = linkshells.save_equips(settings.ls_slots, name, app.ls.equips)
+  if saved ~= settings.ls_slots then settings.ls_slots = saved; save() end
 end
 
 -- A slot as JSON, its keys always in this order: null, or {"name":..,"color":..}.
@@ -321,19 +434,23 @@ local function shell_json(shell)
   return encode_fields{{'name', shell.name}, {'color', shell.color}}
 end
 
+-- refile: lines this addon named from that time (ms) on were named by a
+-- guess; the relay renames each by its slot in this frame.
 local function send_linkshells(state, t)
   local ls = app.ls
-  app.client:send_text('{"type":"linkshells","ls1":' .. shell_json(state.ls1) .. ',"ls2":' .. shell_json(state.ls2) .. '}')
-  ls.sent, ls.sent_at, ls.pending = state, t, nil
+  local refile = ls.refile and (',"refile":' .. json.encode(ls.refile)) or ''
+  app.client:send_text('{"type":"linkshells","ls1":' .. shell_json(state.ls1) .. ',"ls2":' .. shell_json(state.ls2) .. refile .. '}')
+  ls.sent, ls.sent_at, ls.pending, ls.refile = state, t, nil, nil
 end
 
 -- Sends a state that differs from the one last sent on this socket, at most
 -- one frame every LS_GAP seconds: a change inside the gap waits for its end,
--- and one undone inside it is never sent.
+-- and one undone inside it is never sent. A frame that tells the relay to
+-- rename lines goes even when the state is the one last sent.
 local function offer_linkshells(state, t)
   local ls = app.ls
   if app.state ~= 'open' then return end
-  if ls.sent and linkshells.same(state, ls.sent) then
+  if ls.sent and linkshells.same(state, ls.sent) and not ls.refile then
     ls.pending = nil
   elseif ls.sent_at and t - ls.sent_at < LS_GAP then
     ls.pending = state
@@ -342,19 +459,173 @@ local function offer_linkshells(state, t)
   end
 end
 
+-- The same linkshells, whichever slots they are in.
+local function same_shells(a, b)
+  local a1, a2, b1, b2 = slot_name(a, 'ls1'), slot_name(a, 'ls2'), slot_name(b, 'ls1'), slot_name(b, 'ls2')
+  return (a1 == b1 and a2 == b2) or (a1 == b2 and a2 == b1)
+end
+
+-- A read that counts: lines are named by it from now on (only once the game
+-- has said where its shells are), and once the game has said, it goes to the
+-- relay. Lines sent with no name while the same shells were equipped are
+-- named then too, through the frame's refile; lines from before the shells
+-- changed keep no name.
+local function settle_linkshells(state, found, t)
+  local ls = app.ls
+  local known = game_said(found)
+  if ls.unnamed_from and ls.current and not same_shells(ls.current, state) then ls.unnamed_from = nil end
+  if known and ls.unnamed_from then
+    ls.refile = math.min(ls.refile or ls.unnamed_from, ls.unnamed_from)
+    ls.unnamed_from = nil
+  end
+  ls.current, ls.known, ls.found = state, known, found
+  if known then offer_linkshells(state, t) end
+end
+
+-- The game said where a shell is: the slots are saved and read again, and
+-- that read counts at once.
+local function apply_game_slots(t)
+  save_slots()
+  local state, found = read_linkshells()
+  if state then
+    app.ls.seen = {state = state, since = t}
+    settle_linkshells(state, found, t)
+  end
+end
+
+local function relaying()
+  return app.state == 'open' or app.state == 'connecting' or app.state == 'waiting'
+end
+
+---------------------------------------------------------------------------
+-- The lookup: asking the game which linkshell is in which slot.
+-- /lsmes shows slot 1's linkshell message and /ls2mes slot 2's, and the
+-- reply (0x0CC) carries the linkshell's name. One command is asked at a
+-- time, and the next only after LS_LOOKUP_WAIT, so a reply always answers
+-- the one command asked; the reply packet is blocked, so nothing shows in
+-- the chat log. With two shells equipped, one answer places both. A slot
+-- with no shell, or a linkshell with no message set, gives no reply (the
+-- game may print its own line for that). Linkshell lines wait up to
+-- LS_LOOKUP_HOLD for the first answer, then go with no name until one comes.
+---------------------------------------------------------------------------
+local finish_lookup
+
+local function ask(look, slot, t)
+  look.slot, look.deadline = slot, t + LS_LOOKUP_WAIT
+  windower.send_command(LS_LOOKUP[slot])
+end
+
+local function start_lookup(found, t)
+  local look = {found = found, sig = linkshells.signature(found), hold_until = t + LS_LOOKUP_HOLD}
+  app.ls.lookup = look
+  ask(look, 1, t)
+end
+
+-- The lines held for the first answer.
+local function release_lines()
+  local ls = app.ls
+  local held = ls.held
+  ls.held = {}
+  for _, line in ipairs(held) do deliver(chat_frame(line[1], line[2], line[3], line[4], line[5], line[6])) end
+end
+
+-- The sends that waited for the lookup.
+local function release_sends()
+  local ls = app.ls
+  local sends = ls.held_sends
+  ls.held_sends = {}
+  if app.state == 'open' and app.client then
+    for _, send in ipairs(sends) do handle_send(app.client, send.frame, send.want, true) end
+  end
+end
+
+-- Every prerender while a lookup runs: the held lines go once their wait is
+-- over, and a command whose reply did not come is followed by the next one.
+local function pump_lookup(t)
+  local look = app.ls.lookup
+  if not look then return end
+  if #app.ls.held > 0 and t >= look.hold_until then release_lines() end
+  if t >= look.deadline then
+    if look.slot == 1 then ask(look, 2, t) else finish_lookup(t, 'silent') end
+  end
+end
+
+-- how: 'answered' (the game named a slot's shell), 'silent' (no reply to
+-- either command: not asked again for the same shells, except for a phone
+-- send) or 'cancelled' (an equip packet, a zone or a logout came first).
+finish_lookup = function(t, how)
+  local ls = app.ls
+  local look = ls.lookup
+  if not look then return end
+  ls.lookup = nil
+  if how == 'answered' then
+    ls.looked = nil
+    apply_game_slots(t)
+  elseif how == 'silent' then
+    ls.looked = look.sig
+  end
+  -- A reply still on its way answers a command of ours: it stays out of the log.
+  if how ~= 'answered' then ls.swallow_until = t + LS_LOOKUP_WAIT end
+  release_lines()
+  release_sends()
+end
+
+-- A linkshell message (0x0CC). -> true when it answers a command the addon
+-- typed, so the caller blocks it.
+local function on_linkshell_message(data)
+  local ls, t = app.ls, now()
+  local look = ls.lookup
+  if look then
+    if not linkshells.confirm(ls.equips, look.found, linkshells.message_names(data), look.slot) then return false end
+    ls.said[look.slot] = true
+    if #look.found == 2 then ls.said[3 - look.slot] = true end
+    finish_lookup(t, 'answered')
+    return true
+  end
+  return t < ls.swallow_until
+end
+
+-- One shell equipped, and a linkshell line on channel: that is the slot it
+-- is in. Not while an equip packet's read is pending: another shell may have
+-- just been equipped, and the line may be its.
+confirm_lone = function(channel)
+  local ls = app.ls
+  local found = ls.found
+  if not (found and #found == 1) or ls.due.equip then return end
+  local number = channel == 'ls1' and 1 or 2
+  linkshells.place(ls.equips, found[1].key, number)
+  ls.said[number] = true
+  apply_game_slots(now())
+  finish_lookup(now(), 'cancelled')
+end
+
+-- A linkshell send arrived while the game has not said where the equipped
+-- shells are: it is asked now. -> true when a lookup was started.
+lookup_for_send = function()
+  local ls, t = app.ls, now()
+  if ls.known or ls.lookup then return false end
+  local state, found = read_linkshells()
+  if not state or #found == 0 or game_said(found) then return false end
+  start_lookup(found, t)
+  return true
+end
+
 local function check_linkshells(t)
   local ls = app.ls
   local watching = t < ls.watch_until
   ls.next_read = t + (watching and LS_RECHECK or LS_PERIOD)
-  local state = read_linkshells()
+  local state, found = read_linkshells()
   if not state then
     ls.seen = nil
     return
   end
   if not (ls.seen and linkshells.same(state, ls.seen.state)) then ls.seen = {state = state, since = t} end
   if watching and t - ls.seen.since < LS_SETTLE then return end
-  ls.current = state
-  offer_linkshells(state, t)
+  settle_linkshells(state, found, t)
+  -- The game has not said where these shells are: ask it, once for what is equipped.
+  if not ls.known and not ls.lookup and #found > 0 and relaying() and linkshells.signature(found) ~= ls.looked then
+    start_lookup(found, t)
+  end
 end
 
 -- Login or zone-in: the game's linkshell data may be wrong for a while.
@@ -416,8 +687,8 @@ local function on_open(client)
   app.outage = false
   local ls = app.ls
   ls.sent, ls.sent_at, ls.pending = nil, nil, nil
-  -- While a read is settling, the new socket gets the last settled one.
-  if t < ls.watch_until and ls.current then offer_linkshells(ls.current, t) end
+  -- While a read is settling, the new socket gets the last settled one, if the game had said its slots.
+  if t < ls.watch_until and ls.current and ls.known then offer_linkshells(ls.current, t) end
   check_linkshells(t)
 end
 
@@ -635,9 +906,16 @@ local function shell_text(shell)
 end
 
 -- Read on the spot, so it shows what is equipped even while not connected.
+-- Slots the game has not said are not shown.
 local function linkshells_text()
-  local state = read_linkshells()
+  local state, found = read_linkshells()
   if not state then return 'unknown' end
+  if not game_said(found) then
+    local names = {}
+    for i, f in ipairs(found) do names[i] = f.shell.name end
+    table.sort(names)
+    return table.concat(names, ', ') .. ' (slots not known yet)'
+  end
   return '1=' .. shell_text(state.ls1) .. ' 2=' .. shell_text(state.ls2)
 end
 
@@ -728,8 +1006,9 @@ windower.register_event('prerender', function()
       app.last_ping = t
     end
   end
-  -- An event's read, or the periodic one while no event read is pending.
   local ls, read = app.ls, false
+  pump_lookup(t)
+  -- An event's read, or the periodic one while no event read is pending.
   for kind, at in pairs(ls.due) do
     if t >= at then ls.due[kind], read = nil, true end
   end
@@ -737,14 +1016,19 @@ windower.register_event('prerender', function()
   if ls.pending and app.state == 'open' and t - ls.sent_at >= LS_GAP then send_linkshells(ls.pending, t) end
 end)
 
--- The chunk handlers return nothing, so they never block a packet.
+-- The chunk handlers block one packet only: the reply to a /lsmes or
+-- /ls2mes the addon typed itself (0x0CC). Every other packet goes through.
 windower.register_event('incoming chunk', function(id, data)
+  if id == 0x0CC then
+    if on_linkshell_message(data) then return true end
+    return
+  end
   if id ~= 0x017 then return end
   local record = chat.parse_incoming(data)
   if not record then return end
   local me = player_name()
   if me and record.sender:lower() == me:lower() then return end
-  deliver(chat_frame(record.channel, 'in', record.sender, NULL, record.text))
+  relay_line(record.channel, 'in', record.sender, NULL, record.text)
 end)
 
 -- Linkshell equip (0x0E0), zone-in (0x00A, after which the inventory
@@ -758,14 +1042,17 @@ windower.register_event('incoming chunk', function(id, data)
       app.ls.equips = linkshells.load_equips(settings.ls_slots, player.name)
     end
     if linkshells.note_equip(app.ls.equips, data) then
+      -- The game said where this slot's shell is: a lookup is not needed.
+      app.ls.said[linkshells.parse_equip(data)] = true
+      finish_lookup(now(), 'cancelled')
       if player and player.name then
         app.ls.equips_for = player.name
-        local saved = linkshells.save_equips(settings.ls_slots, player.name, app.ls.equips)
-        if saved ~= settings.ls_slots then settings.ls_slots = saved; save() end
+        save_slots()
       end
       check_linkshells_in('equip', LS_EQUIP_SETTLE)
     end
   elseif id == 0x00A then
+    finish_lookup(now(), 'cancelled')
     watch_linkshells()
     check_linkshells_in('zone', LS_ZONE_SETTLE)
   elseif id == 0x01D then
@@ -780,14 +1067,17 @@ end)
 
 -- Another character may log in next, with other shells in other bag slots.
 windower.register_event('logout', function()
-  app.ls.equips, app.ls.current, app.ls.seen, app.ls.equips_for = {}, nil, nil, nil
+  finish_lookup(now(), 'cancelled')
+  local ls = app.ls
+  ls.equips, ls.current, ls.seen, ls.equips_for = {}, nil, nil, nil
+  ls.said, ls.known, ls.found, ls.looked, ls.unnamed_from = {}, false, nil, nil, nil
 end)
 
 windower.register_event('outgoing chunk', function(id, data, modified, injected, blocked)
   if (id ~= 0x0B5 and id ~= 0x0B6) or blocked then return end
   local record = chat.parse_outgoing(id, data)
   if not record or take_echo(record) then return end
-  deliver(chat_frame(record.channel, 'out', player_name() or NULL, record.target or NULL, record.text))
+  relay_line(record.channel, 'out', player_name() or NULL, record.target or NULL, record.text)
 end)
 
 windower.register_event('addon command', function(cmd, ...)

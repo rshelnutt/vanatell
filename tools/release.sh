@@ -68,9 +68,10 @@ command -v zip >/dev/null || die "zip not found"
 
 cd "$REPO"
 git rev-parse -q --verify "refs/tags/$TAG" >/dev/null || die "no tag $TAG in $REPO"
-git show "$TAG:vanatell.lua" | grep -qx "_addon.version = '$VERSION'" || die "vanatell.lua at $TAG is not version $VERSION"
-git show "$TAG:ashita/vanatell.lua" | grep -qx "addon.version = '$VERSION'" || die "ashita/vanatell.lua at $TAG is not version $VERSION"
-git show "$TAG:CHANGELOG.md" | grep -q "^## \[$VERSION\] - " || die "CHANGELOG.md at $TAG has no [$VERSION] section"
+# grep reads to the end (no -q): with pipefail, -q quitting early breaks git show's pipe and fails the check.
+git show "$TAG:vanatell.lua" | grep -x "_addon.version = '$VERSION'" >/dev/null || die "vanatell.lua at $TAG is not version $VERSION"
+git show "$TAG:ashita/vanatell.lua" | grep -x "addon.version = '$VERSION'" >/dev/null || die "ashita/vanatell.lua at $TAG is not version $VERSION"
+git show "$TAG:CHANGELOG.md" | grep "^## \[$VERSION\] - " >/dev/null || die "CHANGELOG.md at $TAG has no [$VERSION] section"
 
 if [ -n "$LOCAL" ]; then
   mkdir -p "$LOCAL"

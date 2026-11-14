@@ -504,6 +504,7 @@ function U:run_update()
     end
     job.manifest = m
     job.step = U.scan_step
+    self.log('update ' .. m.version .. ' found, applying...')
   end, function(e) self:fail(job, e) end)
   if not ok then self:fail(job, err) end
 end
