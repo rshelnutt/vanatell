@@ -13,7 +13,7 @@ in this folder for what you may and may not do with it.
 -- network work is pumped from prerender and never blocks.
 _addon.name = 'vanatell'
 _addon.command = 'vt'
-_addon.version = '0.3.0'
+_addon.version = '0.3.1'
 
 local config = require('config')
 
@@ -60,7 +60,8 @@ local UPDATE_URL = 'https://vanatell.com/addon/latest.json'
 -- player is not logged in.
 -- Every install talks to the one VanaTell relay. //vt url overrides it for people running their own.
 local DEFAULT_URL = 'wss://vanatell.rob-shelnutt.workers.dev'
-local settings = config.load({url = DEFAULT_URL, token = '', account_id = '', enabled = true})
+local settings = config.load({url = DEFAULT_URL, token = '', account_id = '', enabled = true, ls_slots = ''})
+if type(settings.ls_slots) ~= 'string' then settings.ls_slots = '' end
 if type(settings.url) ~= 'string' or settings.url == '' then settings.url = DEFAULT_URL end
 
 -- state: unpaired | disabled | waiting | connecting | open | unauthorized
@@ -303,6 +304,12 @@ local function read_linkshells()
     if not player then return nil end
     local items = windower.ffxi.get_items()
     if not linkshells.inventory_loaded(items) or not load_extdata() then return nil end
+    -- A reload mid-session has seen no 0x0E0 yet: start from the slots the game
+    -- last sent for this character, saved in the settings.
+    if app.ls.equips_for ~= player.name then
+      app.ls.equips_for = player.name
+      if next(app.ls.equips) == nil then app.ls.equips = linkshells.load_equips(settings.ls_slots, player.name) end
+    end
     return linkshells.detect(player, items, extdata.decode, app.ls.equips)
   end)
   return ok and state or nil
@@ -745,7 +752,19 @@ end)
 -- game has caught up.
 windower.register_event('incoming chunk', function(id, data)
   if id == 0x0E0 then
-    if linkshells.note_equip(app.ls.equips, data) then check_linkshells_in('equip', LS_EQUIP_SETTLE) end
+    local player = windower.ffxi.get_player()
+    -- First 0x0E0 since a reload: start from the saved slots, then apply it.
+    if player and player.name and app.ls.equips_for ~= player.name and next(app.ls.equips) == nil then
+      app.ls.equips = linkshells.load_equips(settings.ls_slots, player.name)
+    end
+    if linkshells.note_equip(app.ls.equips, data) then
+      if player and player.name then
+        app.ls.equips_for = player.name
+        local saved = linkshells.save_equips(settings.ls_slots, player.name, app.ls.equips)
+        if saved ~= settings.ls_slots then settings.ls_slots = saved; save() end
+      end
+      check_linkshells_in('equip', LS_EQUIP_SETTLE)
+    end
   elseif id == 0x00A then
     watch_linkshells()
     check_linkshells_in('zone', LS_ZONE_SETTLE)
@@ -761,7 +780,7 @@ end)
 
 -- Another character may log in next, with other shells in other bag slots.
 windower.register_event('logout', function()
-  app.ls.equips, app.ls.current, app.ls.seen = {}, nil, nil
+  app.ls.equips, app.ls.current, app.ls.seen, app.ls.equips_for = {}, nil, nil, nil
 end)
 
 windower.register_event('outgoing chunk', function(id, data, modified, injected, blocked)

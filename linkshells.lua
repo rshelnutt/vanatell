@@ -151,6 +151,43 @@ function M.note_equip(equips, data)
   return true
 end
 
+-- The equips map kept per character in the settings, so a reload starts with
+-- the slots the game last sent: "Name/bag:slot=n,bag:slot=n;Name/...".
+-- -> the map for name ({} when none), and the string with name's map replaced.
+local function valid_key(k) return type(k) == 'string' and k:match('^%d+:%d+$') ~= nil end
+
+function M.load_equips(saved, name)
+  local map = {}
+  if type(saved) ~= 'string' or type(name) ~= 'string' or name == '' then return map end
+  for entry in saved:gmatch('[^;]+') do
+    local who, pairs_ = entry:match('^([^/]+)/(.*)$')
+    if who == name then
+      for key, n in pairs_:gmatch('([^,=]+)=(%d)') do
+        n = tonumber(n)
+        if valid_key(key) and (n == 1 or n == 2) then map[key] = n end
+      end
+    end
+  end
+  return map
+end
+
+function M.save_equips(saved, name, equips)
+  if type(name) ~= 'string' or name == '' or name:find('[/;]') then return saved end
+  local kept = {}
+  if type(saved) == 'string' then
+    for entry in saved:gmatch('[^;]+') do
+      if entry:match('^([^/]+)/') ~= name then kept[#kept + 1] = entry end
+    end
+  end
+  local keys = {}
+  for key, n in pairs(type(equips) == 'table' and equips or {}) do
+    if valid_key(key) and (n == 1 or n == 2) then keys[#keys + 1] = key .. '=' .. n end
+  end
+  table.sort(keys)
+  if #keys > 0 then kept[#kept + 1] = name .. '/' .. table.concat(keys, ',') end
+  return table.concat(kept, ';')
+end
+
 local function same_shell(a, b)
   if a == nil or b == nil then return a == b end
   return a.name == b.name and a.color == b.color

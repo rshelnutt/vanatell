@@ -36,6 +36,16 @@ The zips, as the tool builds them:
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-11-13
+
+### Fixed
+
+- Linkshell 1 and 2 no longer swap after a reload or an update. The game names
+  each slot's shell when you zone or equip one; the addon now saves that per
+  character and starts from it when it loads mid-session, instead of trusting
+  the game's linkshell name, which can name your slot 2 shell after you
+  re-equip it. Lines from each linkshell go to the right conversation again.
+
 ## [0.3.0] - 2026-11-14
 
 ### Added
@@ -137,7 +147,8 @@ The zips, as the tool builds them:
 - Case-insensitive pair codes: upper or lower case both work, and dashes or
   spaces copied from the phone are ignored.
 
-[Unreleased]: https://github.com/rshelnutt/vanatell/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/rshelnutt/vanatell/compare/v0.3.1...HEAD
+[0.3.1]: https://github.com/rshelnutt/vanatell/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/rshelnutt/vanatell/releases/tag/v0.3.0
 [0.2.3]: https://github.com/rshelnutt/vanatell/releases/tag/v0.2.3
 [0.2.2]: https://github.com/rshelnutt/vanatell/releases/tag/v0.2.2
