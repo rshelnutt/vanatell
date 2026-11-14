@@ -31,6 +31,16 @@ How a release is cut (no scripts needed):
 
 ## [Unreleased]
 
+## [0.2.3] - 2026-11-13
+
+### Fixed
+
+- A linkshell equipped from your Mog Satchel, Sack or Case now shows on the
+  phone. The addon only looked in your inventory (and the wardrobes, which never
+  hold linkshells), so a pearl worn from the satchel was never found: the phone
+  showed no linkshell in that slot and its lines arrived as an unknown
+  linkshell you could not reply to.
+
 ## [0.2.2] - 2026-11-13
 
 ### Fixed

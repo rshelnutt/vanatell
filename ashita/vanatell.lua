@@ -23,7 +23,7 @@ in this folder for what you may and may not do with it.
 -- main.lua is the Windower addon's vanatell.lua.
 addon.name    = 'vanatell'
 addon.author  = 'Rob Shelnutt'
-addon.version = '0.2.2'
+addon.version = '0.2.3'
 addon.desc    = 'Relays tells, party and linkshell chat to the VanaTell app.'
 addon.link    = 'https://github.com/rshelnutt/vanatell'
 
@@ -113,9 +113,9 @@ end
 ---------------------------------------------------------------------------
 -- Game data in the shapes Windower hands out.
 ---------------------------------------------------------------------------
--- The bags a linkshell is equipped from (inventory and wardrobes 1 to 8),
+-- The bags a linkshell is equipped from (inventory, satchel, sack and case; wardrobes never hold linkshells),
 -- and the item status of an equipped linkshell, as linkshells.lua has them.
-local BAGS = {0, 8, 10, 11, 12, 13, 14, 15, 16}
+local BAGS = {0, 5, 6, 7}
 local BAG_SLOTS = 80
 local EQUIPPED = 19
 

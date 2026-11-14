@@ -14,10 +14,11 @@ M.EQUIPPED = 19  -- item status of an equipped linkshell
 M.NAME_MAX = 20  -- longest linkshell name
 local BAG_SLOTS = 80
 
--- Inventory and the eight wardrobes, the bags a linkshell is equipped from:
--- {bag number, the bag's key in windower.ffxi.get_items()}.
-M.BAGS = {{0, 'inventory'}, {8, 'wardrobe'}, {10, 'wardrobe2'}, {11, 'wardrobe3'}, {12, 'wardrobe4'},
-          {13, 'wardrobe5'}, {14, 'wardrobe6'}, {15, 'wardrobe7'}, {16, 'wardrobe8'}}
+-- The bags a linkshell is equipped from: the inventory and the Mog Satchel,
+-- Sack and Case (a pearl equipped from the satchel is seen in game: 0x0E0
+-- names bag 5). Wardrobes never hold linkshells. {bag number, the bag's key in
+-- windower.ffxi.get_items()}.
+M.BAGS = {{0, 'inventory'}, {5, 'satchel'}, {6, 'sack'}, {7, 'case'}}
 
 -- A colour part as a whole number from 0 to 255; anything not a number is 0.
 local function part(v)
