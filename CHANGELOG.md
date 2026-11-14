@@ -31,6 +31,17 @@ How a release is cut (no scripts needed):
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-11-13
+
+### Fixed
+
+- Linkshells: a linkshell the game does not mark the usual way is now found.
+  A leader's Linkshell in slot 1 and some pearls in slot 2 read as "no
+  linkshell equipped", so their chat landed under "Unknown linkshell" on the
+  phone and could not be answered. On Windower slot 1 now shows as soon as
+  the addon loads; slot 2 (and, on Ashita, either slot) shows after you zone
+  or equip the pearl again.
+
 ## [0.2.0] - 2026-11-13
 
 ### Added
@@ -82,7 +93,8 @@ How a release is cut (no scripts needed):
 - Case-insensitive pair codes: upper or lower case both work, and dashes or
   spaces copied from the phone are ignored.
 
-[Unreleased]: https://github.com/rshelnutt/vanatell/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/rshelnutt/vanatell/compare/v0.2.1...HEAD
+[0.2.1]: https://github.com/rshelnutt/vanatell/releases/tag/v0.2.1
 [0.2.0]: https://github.com/rshelnutt/vanatell/releases/tag/v0.2.0
 [0.1.2]: https://github.com/rshelnutt/vanatell/releases/tag/v0.1.2
 [0.1.1]: https://github.com/rshelnutt/vanatell/releases/tag/v0.1.1

@@ -49,17 +49,27 @@ local OTHER = {ls1 = 'ls2', ls2 = 'ls1'}
 local SLOT = {[1] = 'ls1', [2] = 'ls2'}
 
 -- player = windower.ffxi.get_player(): player.linkshell names the shell in
---   slot 1 ('' or nil when none).
+--   slot 1 ('' or nil when none), and player.linkshell_slot is that shell's
+--   inventory slot.
 -- bags = windower.ffxi.get_items(), bags keyed by number or by name.
 -- decode = extdata.decode.
 -- equips = {['bag:slot'] = 1 or 2}, from the 0x0E0 packets seen.
 -- -> {ls1 = {name =, color =} | nil, ls2 = ...}
+-- An item counts as an equipped shell when the game flags it so (status 19),
+-- when a 0x0E0 named its bag and slot, or when it is the inventory item at
+-- player.linkshell_slot and carries player.linkshell's name. The game does
+-- not flag every equipped shell 19 (a leader's Linkshell in slot 1 and a
+-- pearl in slot 2 have been seen with another status), so the packet and the
+-- player's own slot are trusted over the status. Any other status, a shell
+-- set for sale in the bazaar (25) among them, is not equipped.
 -- A shell the equips map places goes to that slot. Otherwise the shell named
 -- in player.linkshell is ls1 and any other is ls2. Two shells never share a
 -- slot: when the slot a shell would take holds a shell the equips map placed,
 -- it takes the other slot; when it holds one placed by name, it is left out.
 function M.detect(player, bags, decode, equips)
   equips = type(equips) == 'table' and equips or {}
+  local primary = type(player) == 'table' and player.linkshell or nil
+  local primary_slot = type(player) == 'table' and tonumber(player.linkshell_slot) or nil
   local found = {}
   if type(bags) == 'table' then
     for _, b in ipairs(M.BAGS) do
@@ -68,9 +78,15 @@ function M.detect(player, bags, decode, equips)
       if type(items) == 'table' then
         for slot = 1, BAG_SLOTS do
           local item = items[slot]
-          if type(item) == 'table' and item.status == M.EQUIPPED then
+          local where = id .. ':' .. slot
+          local at_primary = id == 0 and slot == primary_slot
+          if type(item) == 'table' and (item.status == M.EQUIPPED or SLOT[equips[where]] or at_primary) then
             local shell = read_shell(decode, item)
-            if shell then found[#found + 1] = {key = id .. ':' .. slot, shell = shell} end
+            -- The item at player.linkshell_slot counts only if it is the shell player.linkshell names.
+            if shell and at_primary and item.status ~= M.EQUIPPED and not SLOT[equips[where]] and shell.name ~= primary then
+              shell = nil
+            end
+            if shell then found[#found + 1] = {key = where, shell = shell} end
           end
         end
       end
@@ -84,7 +100,6 @@ function M.detect(player, bags, decode, equips)
       result[slot], mapped[slot], placed[i] = f.shell, true, true
     end
   end
-  local primary = type(player) == 'table' and player.linkshell or nil
   for i, f in ipairs(found) do
     if not placed[i] then
       local slot = (is_name(primary) and f.shell.name == primary) and 'ls1' or 'ls2'
