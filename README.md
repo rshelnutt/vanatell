@@ -83,13 +83,15 @@ To pair again later, open **Settings** in the app and tap **Generate new pairing
 | `//vt status` | `/vt status` | Show the version, pairing, connection, queued messages and linkshells |
 | `//vt on` / `//vt off` | `/vt on` / `/vt off` | Start or stop relaying |
 | `//vt unpair` | `/vt unpair` | Forget this PC's pairing |
+| `//vt update` | `/vt update` | Install the newest version, if there is one, and reload |
+| `//vt rollback` | `/vt rollback` | Go back to the version before the last update, and reload |
 | `//vt help` | `/vt help` | List the commands in game |
 | `//vt url wss://host` | `/vt url wss://host` | Advanced: use your own relay. `//vt url default` (`/vt url default`) goes back to the built-in one |
 
 `//vt status` (`/vt status` on Ashita) prints, for example:
 
 ```
-VanaTell: version: 0.2.2
+VanaTell: version: 0.3.0
 VanaTell: relay: built-in
 VanaTell: paired: yes (account ...)
 VanaTell: enabled: yes
@@ -98,6 +100,16 @@ VanaTell: queued: 0
 VanaTell: linkshells: 1=KupoKnights 2=(none)
 ```
 
+## Updating
+
+Each time it loads, the addon asks vanatell.com once for the newest version number. If there is a newer one, it says so in the game log, for example `VanaTell 0.3.1 is available: type //vt update`. Nothing is downloaded until you type it.
+
+`//vt update` (on Ashita, `/vt update`) downloads only the files that changed, checks each one's size and SHA-256 against the list vanatell.com publishes, copies the files it replaces into `backup/` in the addon folder, puts the new ones in place and reloads the addon, which then says `VanaTell: updated to 0.3.1`. If anything fails, no file is changed and the version you have keeps running. Your settings and pairing are never touched. You can type it any time; with the newest version it says `already up to date`.
+
+`//vt rollback` (`/vt rollback`) puts back the files the last update replaced and reloads.
+
+To update by hand instead, download the zip from [Releases](../../releases) as in Install.
+
 ## What is sent and what is not
 
 **Sent to the relay**
@@ -105,6 +117,10 @@ VanaTell: linkshells: 1=KupoKnights 2=(none)
 - Each tell, party, LS1 and LS2 line: the channel, whether it came in or went out, who sent it, the tell target, the text, the time, and for linkshell lines the name of that linkshell.
 - The names and colours of the linkshells equipped in slots 1 and 2, when they change.
 - A keepalive every 30 seconds.
+
+**Asked of vanatell.com**
+
+- On load, and when you type `//vt update`, the newest version number and its file list. The request says only the addon's version and whether it is Windower or Ashita.
 
 **Never sent**
 
@@ -122,7 +138,7 @@ VanaTell: linkshells: 1=KupoKnights 2=(none)
 - On Ashita that file is `config/addons/vanatell/settings.json` in the Ashita folder, shared by all your characters. Treat it like a password too. `/vt unpair` wipes the token.
 - Lines that arrive while the relay is out of reach wait in memory, up to 500, and are never written to disk.
 
-Everything travels over an encrypted connection, and the addon checks the relay's certificate against the small list of trust roots in `relay-roots.txt`. That file is not a certificate to install; it is only read by the addon.
+Everything travels over an encrypted connection, and the addon checks the relay's certificate, and vanatell.com's for updates, against the small list of trust roots in `relay-roots.txt`. That file is not a certificate to install; it is only read by the addon.
 
 ## Troubleshooting
 
@@ -142,7 +158,7 @@ Everything travels over an encrypted connection, and the addon checks the relay'
 
 VanaTell follows [semantic versioning](https://semver.org). `//vt status` (`/vt status` on Ashita) shows the version you have, and [CHANGELOG.md](CHANGELOG.md) lists what changed in each one. Until 1.0, 0.x releases may change behaviour between minor versions.
 
-Each release is published on the [Releases](../../releases) page as two zips: `vanatell-vX.Y.Z.zip` for Windower and `vanatell-ashita-vX.Y.Z.zip` for Ashita, for example `vanatell-v0.2.3.zip` and `vanatell-ashita-v0.2.3.zip`. Each holds exactly the `vanatell` addon folder: unzip the Windower one into `Windower4/addons/` and the Ashita one into `Ashita/addons/`.
+Each release is published on the [Releases](../../releases) page as two zips: `vanatell-vX.Y.Z.zip` for Windower and `vanatell-ashita-vX.Y.Z.zip` for Ashita, for example `vanatell-v0.3.0.zip` and `vanatell-ashita-v0.3.0.zip`. Each holds exactly the `vanatell` addon folder: unzip the Windower one into `Windower4/addons/` and the Ashita one into `Ashita/addons/`.
 
 ## Licence
 

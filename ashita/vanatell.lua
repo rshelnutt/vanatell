@@ -12,18 +12,20 @@ in this folder for what you may and may not do with it.
 --              /vt commands), and login and logout read from the zone
 --              packets the way Ashita's settings library reads them
 --   chat       AddChatMessage for the log; QueueCommand types what the phone
---              sends, as if the player typed it
+--              sends, as if the player typed it, and runs /addon reload
+--              vanatell after //vt update or //vt rollback
 --   game data  the player from party and player memory, the bags from
 --              inventory memory, linkshell names and colours from item data
 --   settings   one file for this install: config/addons/vanatell/settings.json
 --              under the Ashita folder, so every character shares one pairing
 --   TLS        Ashita ships LuaSec as socket.ssl; the addon asks for ssl
+--   files      ashita.fs for the folders an update writes (backup/, assets/)
 -- Everything else (the relay connection, pairing, chat, the offline queue,
 -- linkshell detection) is the shared code, unchanged. In the release folder
 -- main.lua is the Windower addon's vanatell.lua.
 addon.name    = 'vanatell'
 addon.author  = 'Rob Shelnutt'
-addon.version = '0.2.3'
+addon.version = '0.3.0'
 addon.desc    = 'Relays tells, party and linkshell chat to the VanaTell app.'
 addon.link    = 'https://github.com/rshelnutt/vanatell'
 
@@ -48,9 +50,14 @@ local function add_to_chat(mode, text)
   AshitaCore:GetChatManager():AddChatMessage(mode, false, (tostring(text):gsub('//vt', '/vt')))
 end
 
--- The addon only ever types chat into the game, as 'input /tell ...',
--- 'input /p ...', 'input /l ...' or 'input /l2 ...'; nothing else is passed on.
+-- The addon types chat into the game, as 'input /tell ...', 'input /p ...',
+-- 'input /l ...' or 'input /l2 ...', and after an update or a rollback asks
+-- for 'lua reload vanatell', which is Ashita's /addon reload vanatell, run
+-- by Ashita itself (CommandMode.AshitaParse, -1). Nothing else is passed on.
 local function send_command(command)
+  if command == 'lua reload ' .. addon.name then
+    return AshitaCore:GetChatManager():QueueCommand(-1, '/addon reload ' .. addon.name)
+  end
   local text = type(command) == 'string' and command:match('^input (/.+)$')
   if text then AshitaCore:GetChatManager():QueueCommand(1, text) end
 end
@@ -328,7 +335,7 @@ package.preload.ssl = function() return require('socket.ssl') end
 -- so console lines go to Ashita's log file: LogManager:Log at Info (4).
 local function console(line)
   local logs = rawget(_G, 'LogManager')
-  if logs then logs:Log(4, addon.name, line) end
+  if logs then logs:Log(4, addon.name, (tostring(line):gsub('//vt', '/vt'))) end
 end
 
 windower = {
@@ -339,6 +346,9 @@ windower = {
   send_command = send_command,
   convert_auto_trans = convert_auto_trans,
   ffxi = {get_player = get_player, get_items = get_items},
+  platform = 'ashita',
+  dir_exists = function(path) return ashita.fs.exists(path) end,
+  create_dir = function(path) return (ashita.fs.create_directory or ashita.fs.create_dir)(path) end,
 }
 _addon = {}
 

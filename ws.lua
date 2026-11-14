@@ -12,9 +12,9 @@ in this folder for what you may and may not do with it.
 -- Transport: a non-blocking Stream (TCP connect, incremental TLS handshake,
 -- buffered I/O) over an injectable `net` table, and the client's connect and
 -- upgrade handshake, then the open connection: frames from the server, ping
--- replies, masked sends and the close handshake. http_post: one HTTP POST
--- over the same Stream, for pairing. Nothing blocks on the socket; each pump
--- does bounded work.
+-- replies, masked sends and the close handshake. http_post and http_get: one
+-- HTTP request over the same Stream, for pairing and for the addon's updates.
+-- Nothing blocks on the socket; each pump does bounded work.
 -- LuaSec ('ssl') is never required here at load time.
 local socket = require('socket')
 local mime = require('mime')
@@ -887,8 +887,8 @@ function Client:pump(max_frames)
 end
 
 ---------------------------------------------------------------------------
--- HTTP POST: one request per connection (Connection: close), with the same
--- URL rules, Stream and TLS checks as the WebSocket client.
+-- HTTP POST and GET: one request per connection (Connection: close), with the
+-- same URL rules, Stream and TLS checks as the WebSocket client.
 ---------------------------------------------------------------------------
 local Request = {}
 Request.__index = Request
@@ -898,12 +898,7 @@ local MAX_BODY = 65536
 local MAX_CHUNK_LINE = 4096
 local BAD_CHUNKED = 'bad chunked encoding'
 
--- opts: url (http:// or https://), body, headers ({name, value} pairs),
--- cafile, timeout (seconds, default 15), net, on_done(status, body) and
--- on_error(err). -> request | nil, err. A synchronous failure (URL, resolve
--- or connect) fires no callbacks; otherwise exactly one callback fires,
--- unless cancel() comes first.
-function ws.http_post(opts)
+local function new_request(opts, method)
   local parsed, err = ws.parse_url(opts.url)
   if not parsed then return nil, err end
   if parsed.scheme ~= 'http' and parsed.scheme ~= 'https' then return nil, 'unsupported scheme' end
@@ -912,9 +907,11 @@ function ws.http_post(opts)
   stream, err = Stream.new(parsed, opts.cafile, net)
   if not stream then return nil, err end
   return setmetatable({
+    method = method,
     parsed = parsed,
     body = opts.body or '',
     headers = opts.headers or {},
+    max_body = opts.max_body or MAX_BODY,
     net = net,
     stream = stream,
     deadline = net.now() + (opts.timeout or DEFAULT_HTTP_TIMEOUT),
@@ -924,16 +921,43 @@ function ws.http_post(opts)
   }, Request)
 end
 
-local function post_request(self)
-  local lines = {
-    'POST ' .. self.parsed.path .. ' HTTP/1.1',
-    'Host: ' .. host_header(self.parsed),
-    'Content-Type: application/json',
-    'Content-Length: ' .. #self.body,
-    'Connection: close',
-  }
+-- opts: url (http:// or https://), body, headers ({name, value} pairs),
+-- cafile, timeout (seconds, default 15), max_body (bytes, default 65536),
+-- net, on_done(status, body) and on_error(err). -> request | nil, err. A
+-- synchronous failure (URL, resolve or connect) fires no callbacks;
+-- otherwise exactly one callback fires, unless cancel() comes first.
+function ws.http_post(opts)
+  return new_request(opts, 'POST')
+end
+
+-- The same as http_post with no body: a GET for path, asking for the body
+-- as it is stored (no compression).
+function ws.http_get(opts)
+  return new_request(opts, 'GET')
+end
+
+local function request_bytes(self)
+  local lines
+  if self.method == 'GET' then
+    lines = {
+      'GET ' .. self.parsed.path .. ' HTTP/1.1',
+      'Host: ' .. host_header(self.parsed),
+      'Accept-Encoding: identity',
+      'Connection: close',
+    }
+  else
+    lines = {
+      'POST ' .. self.parsed.path .. ' HTTP/1.1',
+      'Host: ' .. host_header(self.parsed),
+      'Content-Type: application/json',
+      'Content-Length: ' .. #self.body,
+      'Connection: close',
+    }
+  end
   for _, h in ipairs(self.headers) do lines[#lines + 1] = h[1] .. ': ' .. h[2] end
-  return concat(lines, '\r\n') .. '\r\n\r\n' .. self.body
+  local head = concat(lines, '\r\n') .. '\r\n\r\n'
+  if self.method == 'GET' then return head end
+  return head .. self.body
 end
 
 -- Reads the status line and headers off rx and picks the body framing:
@@ -952,7 +976,7 @@ local function read_head(self)
   if length then
     if not length:find('^%d+$') then return nil, 'bad Content-Length' end
     length = tonumber(length)
-    if length > MAX_BODY then return nil, 'response too large' end
+    if length > self.max_body then return nil, 'response too large' end
     self.framing, self.length = 'length', length
   elseif has_token(fields['transfer-encoding'], 'chunked') then
     self.framing, self.chunk_phase, self.chunks, self.received = 'chunked', 'size', {}, 0
@@ -988,7 +1012,7 @@ local function chunk_step(self, rx, pos)
     local size = tonumber(hex, 16)
     if size == 0 then
       self.chunk_phase = 'trailer'
-    elseif self.received + size > MAX_BODY then
+    elseif self.received + size > self.max_body then
       return nil, 'response too large'
     else
       self.chunk_phase, self.chunk_left, self.received = 'data', size, self.received + size
@@ -1027,7 +1051,7 @@ local function read_response(self)
     if ok then return concat(self.chunks) end
     return ok, err
   end
-  if #stream.rx > MAX_BODY then return nil, 'response too large' end
+  if #stream.rx > self.max_body then return nil, 'response too large' end
   if stream.eof then return stream.rx end
   return false
 end
@@ -1050,7 +1074,7 @@ function Request:pump()
     local status, err = stream:advance()
     if not status then return finish(self, 'on_error', err) end
     if status == 'ready' then
-      stream.tx = post_request(self)
+      stream.tx = request_bytes(self)
       self.queued = true
     end
   end

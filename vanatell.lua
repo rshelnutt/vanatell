@@ -8,11 +8,12 @@ in this folder for what you may and may not do with it.
 -- This file holds the Windower events, the //vt commands (pairing among
 -- them), the settings, the connection lifecycle (connect, ping, idle timeout
 -- and reconnect with backoff), chat capture with its offline queue, the
--- phone's send frames, and the linkshells frame (which shell is equipped in
--- slots 1 and 2). All network work is pumped from prerender and never blocks.
+-- phone's send frames, the linkshells frame (which shell is equipped in
+-- slots 1 and 2), and the update check and //vt update (update.lua). All
+-- network work is pumped from prerender and never blocks.
 _addon.name = 'vanatell'
 _addon.command = 'vt'
-_addon.version = '0.2.3'
+_addon.version = '0.3.0'
 
 local config = require('config')
 
@@ -21,7 +22,7 @@ local config = require('config')
 local hooks = rawget(_G, '__vanatell_test') or {}
 local function load_local(name) return hooks[name] or dofile(windower.addon_path .. name .. '.lua') end
 local json, chat, ws = load_local('json'), load_local('chat'), load_local('ws')
-local linkshells = load_local('linkshells')
+local linkshells, update = load_local('linkshells'), load_local('update')
 local now = hooks.now or require('socket').gettime
 
 local BACKOFF_MIN = 1      -- seconds before the first retry
@@ -52,6 +53,8 @@ local LS_SETTLE = 10
 
 local PING = '{"type":"ping"}'
 local CA_FILE = windower.addon_path .. 'relay-roots.txt'
+-- What the newest version is and which files it holds (update.lua).
+local UPDATE_URL = 'https://vanatell.com/addon/latest.json'
 
 -- Saved with 'all': the default per-character save does nothing while the
 -- player is not logged in.
@@ -130,6 +133,31 @@ local function log(line)
   windower.add_to_chat(207, 'VanaTell: ' .. (line:gsub('[^ -~]', '?')))
 end
 ws.log = log -- ws.lua's one-time notices, such as a TLS options fallback
+
+-- Windower's console window (print), or what the Ashita stand-in gives as
+-- windower.console.
+local console = rawget(windower, 'console') or print
+
+-- The update check on load, //vt update and //vt rollback. Settings are
+-- never among the files it writes.
+local updater = update.new{
+  ws = ws,
+  json = json,
+  version = _addon.version,
+  platform = rawget(windower, 'platform') == 'ashita' and 'ashita' or 'windower',
+  addon_path = windower.addon_path,
+  manifest_url = (hooks.update_url == nil) and UPDATE_URL or hooks.update_url,
+  cafile = CA_FILE,
+  command = '//' .. _addon.command,
+  log = log,
+  chat = function(text) windower.add_to_chat(207, (text:gsub('[^ -~]', '?'))) end,
+  console = console,
+  reload = function() windower.send_command('lua reload ' .. _addon.name) end,
+  fs = {dir_exists = windower.dir_exists, create_dir = windower.create_dir},
+  sha256 = hooks.sha256,
+  budget = hooks.hash_budget,
+}
+hooks.updater = updater
 
 local NOT_PAIRED = 'not paired: run //vt pair <code> with the code from the VanaTell app'
 local REJECTED = 'relay rejected the addon token; pair again with //vt pair <code>'
@@ -526,6 +554,8 @@ local HELP = {
   '//vt status - show the connection state',
   '//vt on | //vt off - start or stop relaying',
   "//vt unpair - forget this addon's relay token",
+  '//vt update - install the newest version, if there is one',
+  '//vt rollback - go back to the version before the last update',
   '//vt help - show this list',
 }
 
@@ -645,21 +675,30 @@ function commands.unpair()
   log('unpaired')
 end
 
+function commands.update()
+  updater:run_update()
+end
+
+function commands.rollback()
+  updater:rollback()
+end
+
 commands.help = show_help
 
 ---------------------------------------------------------------------------
 -- Events.
 ---------------------------------------------------------------------------
--- The version goes to the console, not the chat log: Windower's console
--- window (print), or what the Ashita stand-in gives as windower.console.
+-- The version goes to the console, not the chat log. After an update or a
+-- rollback, the version it reloaded into is said in both.
 windower.register_event('load', function()
-  local console = rawget(windower, 'console') or print
   pcall(console, 'VanaTell ' .. _addon.version .. ' loaded')
+  updater:on_load()
   start()
 end)
 
 windower.register_event('unload', function()
   cancel_pairing()
+  updater:on_unload()
   local client = app.client
   app.client = nil
   if client then client:abort() end
@@ -667,6 +706,7 @@ end)
 
 windower.register_event('prerender', function()
   if app.pairing then app.pairing:pump() end
+  updater:pump()
   local t = now()
   if app.state == 'waiting' and t >= app.next_attempt then connect() end
   if app.client then app.client:pump(MAX_FRAMES) end
