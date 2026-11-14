@@ -11,8 +11,10 @@
 <p align="center">
   <img src="https://img.shields.io/badge/Windower-4-726AF7" alt="Windower 4" />
   <img src="https://img.shields.io/badge/Ashita-v4-26A69A" alt="Ashita v4" />
+  <br />
   <a href="https://apps.apple.com/app/vanatell/id6834196011"><img src="https://img.shields.io/badge/iPhone-App%20Store-147EFB?logo=apple" alt="iPhone app on the App Store" /></a>
   <a href="https://vanatell.com/download/android"><img src="https://img.shields.io/badge/Android-app-3DDC84?logo=android" alt="Android app" /></a>
+  <br />
   <img src="https://img.shields.io/badge/FFXI-PC-B8860B" alt="FFXI" />
 </p>
 
