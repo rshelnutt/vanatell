@@ -10,7 +10,8 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/Windower-4-726AF7" alt="Windower 4" />
-  <img src="https://img.shields.io/badge/Android-app-3DDC84?logo=android" alt="Android app" />
+  <a href="https://apps.apple.com/app/vanatell/id6834196011"><img src="https://img.shields.io/badge/iPhone-App%20Store-147EFB?logo=apple" alt="iPhone app on the App Store" /></a>
+  <a href="https://vanatell.com/download/android"><img src="https://img.shields.io/badge/Android-app-3DDC84?logo=android" alt="Android app" /></a>
   <img src="https://img.shields.io/badge/FFXI-PC-B8860B" alt="FFXI" />
 </p>
 
@@ -22,7 +23,7 @@
 
 ## What it does
 
-VanaTell is a Windower and Ashita addon that sends your tells, party chat and linkshell chat to the VanaTell app on your Android phone, so you can step away from the PC and still answer.
+VanaTell is a Windower and Ashita addon that sends your tells, party chat and linkshell chat to the VanaTell app on your iPhone or Android phone, so you can step away from the PC and still answer.
 
 - **Tells, party, LS1 and LS2 on your phone.** Every tell you receive or send, and every party, LS1 and LS2 line, shows up in the app. Lines you type at the keyboard show up there too.
 - **Answer from the phone.** Send a tell, a party line, an LS1 line or an LS2 line from the app, and the addon types it in game for you.
@@ -39,7 +40,7 @@ The relay address is built in. There is no server to set up and no settings file
 ## Requirements
 
 - Final Fantasy XI on Windows with [Windower 4](https://www.windower.net/) or [Ashita v4](https://www.ashitaxi.com/)
-- The VanaTell app on your Android phone
+- The VanaTell app on your phone: [iPhone, from the App Store](https://apps.apple.com/app/vanatell/id6834196011), or [Android, from vanatell.com](https://vanatell.com/download/android)
 
 ## Install
 
