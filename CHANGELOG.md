@@ -31,6 +31,23 @@ How a release is cut (no scripts needed):
 
 ## [Unreleased]
 
+## [0.2.2] - 2026-11-13
+
+### Fixed
+
+- Linkshells after login and zoning: for a while after you log in or zone,
+  the game can show a linkshell in the wrong slot (slot 2's shell as slot 1).
+  The addon now waits until what it reads has stayed the same for 10 seconds
+  before it tells the phone, and keeps checking for two minutes, so the phone
+  never shows a wrong slot and settles on the right one without re-equipping.
+- Ashita: a leader's Linkshell in slot 1 is found as soon as the addon loads,
+  as on Windower, instead of only after a zone or a re-equip.
+
+### Added
+
+- The addon says which version loaded: `VanaTell 0.2.2 loaded` in the
+  Windower console, and in Ashita's log file on Ashita.
+
 ## [0.2.1] - 2026-11-13
 
 ### Fixed
@@ -93,7 +110,8 @@ How a release is cut (no scripts needed):
 - Case-insensitive pair codes: upper or lower case both work, and dashes or
   spaces copied from the phone are ignored.
 
-[Unreleased]: https://github.com/rshelnutt/vanatell/compare/v0.2.1...HEAD
+[Unreleased]: https://github.com/rshelnutt/vanatell/compare/v0.2.2...HEAD
+[0.2.2]: https://github.com/rshelnutt/vanatell/releases/tag/v0.2.2
 [0.2.1]: https://github.com/rshelnutt/vanatell/releases/tag/v0.2.1
 [0.2.0]: https://github.com/rshelnutt/vanatell/releases/tag/v0.2.0
 [0.1.2]: https://github.com/rshelnutt/vanatell/releases/tag/v0.1.2

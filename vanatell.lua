@@ -12,7 +12,7 @@ in this folder for what you may and may not do with it.
 -- slots 1 and 2). All network work is pumped from prerender and never blocks.
 _addon.name = 'vanatell'
 _addon.command = 'vt'
-_addon.version = '0.2.1'
+_addon.version = '0.2.2'
 
 local config = require('config')
 
@@ -42,6 +42,13 @@ local LS_GAP = 2          -- shortest time between two linkshells frames
 local LS_EQUIP_SETTLE = 1 -- wait after a linkshell equip packet before reading
 local LS_ZONE_SETTLE = 5  -- wait after zone-in or login, while the inventory loads
 local LS_INVENTORY_SETTLE = 0.5 -- wait after the inventory finished loading (0x01D)
+-- After login or zone-in the game can show a shell in the wrong slot for a
+-- while, as its items load over time. For LS_WATCH seconds the linkshells are
+-- read every LS_RECHECK, and a read counts only once it has stayed the same
+-- for LS_SETTLE; until then the last settled one stands.
+local LS_WATCH = 120
+local LS_RECHECK = 2
+local LS_SETTLE = 10
 
 local PING = '{"type":"ping"}'
 local CA_FILE = windower.addon_path .. 'relay-roots.txt'
@@ -71,7 +78,9 @@ local app = {
   opened_at = nil, last_rx = nil, last_ping = nil,
   ls = {               -- linkshell detection
     equips = {},       -- 'bag:slot' -> 1 or 2, from the 0x0E0 packets since load or logout
-    current = nil,     -- the last read, {ls1 =, ls2 =}; nil until one works
+    current = nil,     -- the last settled read, {ls1 =, ls2 =}; nil until one is
+    seen = nil,        -- {state =, since =}: the last read, and when it was first read so
+    watch_until = 0,   -- reads settle (LS_SETTLE) until this time, after login or zone-in
     sent = nil,        -- what the last linkshells frame on this socket said
     sent_at = nil,     -- when it went
     pending = nil,     -- a change waiting for LS_GAP to pass
@@ -271,14 +280,15 @@ local function read_linkshells()
   return ok and state or nil
 end
 
+-- A slot as JSON, its keys always in this order: null, or {"name":..,"color":..}.
 local function shell_json(shell)
-  if not shell then return NULL end
-  return {name = shell.name, color = shell.color}
+  if not shell then return 'null' end
+  return encode_fields{{'name', shell.name}, {'color', shell.color}}
 end
 
 local function send_linkshells(state, t)
   local ls = app.ls
-  app.client:send_text(encode_fields{{'type', 'linkshells'}, {'ls1', shell_json(state.ls1)}, {'ls2', shell_json(state.ls2)}})
+  app.client:send_text('{"type":"linkshells","ls1":' .. shell_json(state.ls1) .. ',"ls2":' .. shell_json(state.ls2) .. '}')
   ls.sent, ls.sent_at, ls.pending = state, t, nil
 end
 
@@ -299,11 +309,23 @@ end
 
 local function check_linkshells(t)
   local ls = app.ls
-  ls.next_read = t + LS_PERIOD
+  local watching = t < ls.watch_until
+  ls.next_read = t + (watching and LS_RECHECK or LS_PERIOD)
   local state = read_linkshells()
-  if not state then return end
+  if not state then
+    ls.seen = nil
+    return
+  end
+  if not (ls.seen and linkshells.same(state, ls.seen.state)) then ls.seen = {state = state, since = t} end
+  if watching and t - ls.seen.since < LS_SETTLE then return end
   ls.current = state
   offer_linkshells(state, t)
+end
+
+-- Login or zone-in: the game's linkshell data may be wrong for a while.
+local function watch_linkshells()
+  app.ls.watch_until = now() + LS_WATCH
+  app.ls.seen = nil
 end
 
 -- An event may have changed what is equipped. The game applies a packet
@@ -359,6 +381,8 @@ local function on_open(client)
   app.outage = false
   local ls = app.ls
   ls.sent, ls.sent_at, ls.pending = nil, nil, nil
+  -- While a read is settling, the new socket gets the last settled one.
+  if t < ls.watch_until and ls.current then offer_linkshells(ls.current, t) end
   check_linkshells(t)
 end
 
@@ -626,7 +650,13 @@ commands.help = show_help
 ---------------------------------------------------------------------------
 -- Events.
 ---------------------------------------------------------------------------
-windower.register_event('load', start)
+-- The version goes to the console, not the chat log: Windower's console
+-- window (print), or what the Ashita stand-in gives as windower.console.
+windower.register_event('load', function()
+  local console = rawget(windower, 'console') or print
+  pcall(console, 'VanaTell ' .. _addon.version .. ' loaded')
+  start()
+end)
 
 windower.register_event('unload', function()
   cancel_pairing()
@@ -677,6 +707,7 @@ windower.register_event('incoming chunk', function(id, data)
   if id == 0x0E0 then
     if linkshells.note_equip(app.ls.equips, data) then check_linkshells_in('equip', LS_EQUIP_SETTLE) end
   elseif id == 0x00A then
+    watch_linkshells()
     check_linkshells_in('zone', LS_ZONE_SETTLE)
   elseif id == 0x01D then
     check_linkshells_in('inventory', LS_INVENTORY_SETTLE)
@@ -684,12 +715,13 @@ windower.register_event('incoming chunk', function(id, data)
 end)
 
 windower.register_event('login', function()
+  watch_linkshells()
   check_linkshells_in('zone', LS_ZONE_SETTLE)
 end)
 
 -- Another character may log in next, with other shells in other bag slots.
 windower.register_event('logout', function()
-  app.ls.equips, app.ls.current = {}, nil
+  app.ls.equips, app.ls.current, app.ls.seen = {}, nil, nil
 end)
 
 windower.register_event('outgoing chunk', function(id, data, modified, injected, blocked)

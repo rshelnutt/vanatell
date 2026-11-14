@@ -23,7 +23,7 @@ in this folder for what you may and may not do with it.
 -- main.lua is the Windower addon's vanatell.lua.
 addon.name    = 'vanatell'
 addon.author  = 'Rob Shelnutt'
-addon.version = '0.2.1'
+addon.version = '0.2.2'
 addon.desc    = 'Relays tells, party and linkshell chat to the VanaTell app.'
 addon.link    = 'https://github.com/rshelnutt/vanatell'
 
@@ -141,33 +141,41 @@ local function get_items()
   return bags
 end
 
--- Windower's player.linkshell names the shell in slot 1. Ashita has no such
--- field, but the game gives the player its slot 1 shell's colour
--- (IEntity:GetLinkshellColor, 0xBBGGRR), so the slot 1 shell is the one
--- equipped shell of that colour. Two equipped shells of that colour, or none,
--- leave it unknown.
-local function slot1_name(index)
+-- Windower's player.linkshell names the shell in slot 1 and
+-- player.linkshell_slot is its inventory slot. Ashita has neither, but the game
+-- gives the player its slot 1 shell's colour (IEntity:GetLinkshellColor,
+-- 0xBBGGRR), so the slot 1 shell is the shell of that colour. The game does
+-- not flag every equipped shell 19 (a leader's Linkshell has been seen with
+-- another status), so any shell of that colour counts except one set for sale
+-- in the bazaar (25): one flagged 19 first, then any other flagged, then an
+-- unflagged one. Shells of that colour with different names, or none, leave
+-- it unknown. -> name, inventory slot (nil when the shell is in a wardrobe) | nil
+local BAZAAR = 25
+local function slot1(index)
   local ok, color = pcall(function() return memory():GetEntity():GetLinkshellColor(index) end)
   if not ok or type(color) ~= 'number' then return nil end
   local r, g, b = floor(color % 256 / 16), floor(floor(color / 256) % 256 / 16), floor(floor(color / 65536) % 256 / 16)
-  local found
-  for _, items in pairs(get_items()) do
+  local found, found_slot, found_rank
+  for bag, items in pairs(get_items()) do
     for slot = 1, BAG_SLOTS do
       local item = items[slot]
-      if item and item.status == EQUIPPED then
+      if item and item.status ~= BAZAAR then
         local decoded, d = pcall(decode, item)
         if decoded and d.type == 'Linkshell' and type(d.name) == 'string' and d.r / 17 == r and d.g / 17 == g and d.b / 17 == b then
           if found and found ~= d.name then return nil end
           found = d.name
+          local rank = item.status == EQUIPPED and 3 or item.status ~= 0 and 2 or 1
+          if bag == 0 and (not found_rank or rank > found_rank) then found_slot, found_rank = slot, rank end
         end
       end
     end
   end
-  return found
+  return found, found_slot
 end
 
 -- windower.ffxi.get_player(): nil unless logged in; otherwise {name =,
--- linkshell =}, where linkshell is worked out when it is first read.
+-- linkshell =, linkshell_slot =}, where the last two are worked out when one
+-- is first read.
 local function get_player()
   local mm = memory()
   if mm:GetPlayer():GetLoginStatus() ~= 2 then return nil end
@@ -176,10 +184,11 @@ local function get_player()
   if type(name) ~= 'string' or name == '' then return nil end
   local index = party:GetMemberTargetIndex(0)
   return setmetatable({name = name}, {__index = function(t, key)
-    if key ~= 'linkshell' then return nil end
-    local shell = slot1_name(index) or ''
-    rawset(t, key, shell)
-    return shell
+    if key ~= 'linkshell' and key ~= 'linkshell_slot' then return nil end
+    local shell, slot = slot1(index)
+    rawset(t, 'linkshell', shell or '')
+    rawset(t, 'linkshell_slot', slot or 0)
+    return rawget(t, key)
   end})
 end
 
@@ -315,10 +324,18 @@ package.preload.config = function() return config end
 package.preload.extdata = function() return {decode = decode} end
 package.preload.ssl = function() return require('socket.ssl') end
 
+-- Ashita v4 has no console window for addons (print writes to the chat log),
+-- so console lines go to Ashita's log file: LogManager:Log at Info (4).
+local function console(line)
+  local logs = rawget(_G, 'LogManager')
+  if logs then logs:Log(4, addon.name, line) end
+end
+
 windower = {
   addon_path = ADDON_PATH,
   register_event = register_event,
   add_to_chat = add_to_chat,
+  console = console,
   send_command = send_command,
   convert_auto_trans = convert_auto_trans,
   ffxi = {get_player = get_player, get_items = get_items},
