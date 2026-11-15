@@ -16,6 +16,8 @@
   <a href="https://vanatell.com/download/android"><img src="https://img.shields.io/badge/Android-app-3DDC84?logo=android" alt="Android app" /></a>
   <br />
   <img src="https://img.shields.io/badge/FFXI-PC-B8860B" alt="FFXI" />
+  <br />
+  <a href="https://discord.gg/xfAJzhhN6D"><img src="https://img.shields.io/badge/Discord-Join%20the%20server-5865F2?logo=discord&logoColor=white" alt="Discord: join the VanaTell server" /></a>
 </p>
 
 <p align="center">
@@ -35,6 +37,14 @@ VanaTell is a Windower and Ashita addon that sends your tells, party chat and li
 Japanese chat is carried both ways: Japanese lines show on your phone as written, and Japanese you type on the phone reaches the game.
 
 Say, shout, yell, emotes and system messages stay in game.
+
+## Help and community
+
+Join the VanaTell server on Discord: [discord.gg/xfAJzhhN6D](https://discord.gg/xfAJzhhN6D)
+
+- **Questions:** ask in #help.
+- **Bugs:** use **Report a bug** in #bug-reports.
+- **Ideas:** post them in #feature-requests.
 
 ## Nothing to configure
 
@@ -159,6 +169,8 @@ Everything travels over an encrypted connection, and the addon checks the relay'
 **Status shows `linkshells: Regalia, MyPearl (slots not known yet)`.** The game has not said which slot each shell is in. The addon asked with `/lsmes` and `/ls2mes` and got no reply, which happens when neither linkshell has a message set. Until the game says, linkshell lines arrive in the app under "Unknown linkshell" and a reply to a linkshell from the phone fails rather than go to the wrong one. Zone or equip a shell again and the lines move to the right linkshell.
 
 **`relay rejected the addon token`.** This PC's pairing was replaced or revoked. Get a new code in the app and type `//vt pair CODE` (on Ashita, `/vt pair CODE`).
+
+**Something else?** Ask in #help on the [VanaTell Discord](https://discord.gg/xfAJzhhN6D), or report it with **Report a bug** in #bug-reports.
 
 ## Versioning
 
