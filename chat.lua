@@ -43,15 +43,27 @@ local function trim(s)
   return s:sub(first, last)
 end
 
--- Game chat text (cp932) to UTF-8, or nil if nothing printable is left.
-function chat.sanitize(raw)
-  -- Windower can expand auto-translate blocks into the phrase text for the
-  -- game's language; a block it leaves behind still becomes [AT] below.
+-- One auto-translate block (0xFD ... 0xFD) as its phrase, or nil when it
+-- cannot be read. Windower's convert_auto_trans gives the bare phrase (the
+-- retail client, 2026-11-15: "Hello!", no marks); Ashita's can give it inside
+-- the game's marks or braces. Either way the phrase alone comes back, and
+-- decode() puts it in { and }, so the app shows every phrase the same way.
+local decode
+local function phrase(block)
   local w = rawget(_G, 'windower')
-  if w and type(w.convert_auto_trans) == 'function' then
-    local ok, converted = pcall(w.convert_auto_trans, raw)
-    if ok and type(converted) == 'string' then raw = converted end
-  end
+  if not (w and type(w.convert_auto_trans) == 'function') then return nil end
+  local ok, converted = pcall(w.convert_auto_trans, block)
+  if not ok or type(converted) ~= 'string' or converted == block then return nil end
+  local text = decode(converted, true)
+  text = text:match('^{(.*)}$') or text
+  text = trim(text)
+  if text == '' then return nil end
+  return text
+end
+
+-- cp932 game text to UTF-8. Inside a phrase (inner), the game's open and
+-- close marks are dropped and a further block is not expanded.
+function decode(raw, inner)
   local out, i, n = {}, 1, #raw
   while i <= n do
     local b = raw:byte(i)
@@ -65,7 +77,8 @@ function chat.sanitize(raw)
         if raw:byte(j) == 0xFD then close = j; break end
       end
       if close then
-        out[#out + 1] = '[AT]'; step = close - i + 1
+        local text = not inner and phrase(raw:sub(i, close))
+        out[#out + 1] = text and ('{' .. text .. '}') or '[AT]'; step = close - i + 1
       else
         out[#out + 1] = '?'
       end
@@ -79,8 +92,10 @@ function chat.sanitize(raw)
       out[#out + 1] = string.char(b)
     elseif b == 0xEF and (raw:byte(i + 1) == 0x27 or raw:byte(i + 1) == 0x28) then
       -- The game's auto-translate open and close marks, not cp932: shown as
-      -- { and }, as the game log shows them
-      out[#out + 1] = raw:byte(i + 1) == 0x27 and '{' or '}'; step = 2
+      -- { and }, as the game log shows them (dropped inside a phrase, which
+      -- gets its own)
+      if not inner then out[#out + 1] = raw:byte(i + 1) == 0x27 and '{' or '}' end
+      step = 2
     else
       -- Shift-JIS: a lead and trail byte, or halfwidth katakana; '?' if it
       -- has no character
@@ -88,7 +103,14 @@ function chat.sanitize(raw)
     end
     i = i + step
   end
-  local text = trim(table.concat(out))
+  return table.concat(out)
+end
+
+-- Game chat text (cp932) to UTF-8, or nil if nothing printable is left.
+-- Each auto-translate phrase becomes {phrase} (the app draws its marks), or
+-- [AT] when it cannot be read.
+function chat.sanitize(raw)
+  local text = trim(decode(raw, false))
   if text == '' then return nil end
   return text
 end

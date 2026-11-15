@@ -16,6 +16,9 @@
 #   6. checks from outside: https://vanatell.com/addon/latest.json is this
 #      manifest, every file it names is served with that hash and size, and
 #      /download/addon and /download/ashita lead to this release's zips.
+#   7. announces the release in the VanaTell Discord's #announcements: this version's CHANGELOG
+#      section, how to update and the download links, through the webhook in
+#      VANATELL_DISCORD_ANNOUNCE_WEBHOOK.
 # The tag must be pushed first. Commit and push the site's cache key change
 # afterwards.
 #
@@ -80,6 +83,7 @@ if [ -n "$LOCAL" ]; then
 else
   WHERE=(--remote)
   [ -n "${VANATELL_CLOUDFLARE_API_TOKEN:-}" ] || die "VANATELL_CLOUDFLARE_API_TOKEN is not set (source ~/.zshenv)"
+  [ -n "${VANATELL_DISCORD_ANNOUNCE_WEBHOOK:-}" ] || die "VANATELL_DISCORD_ANNOUNCE_WEBHOOK is not set (source ~/.zshenv)"
   gh auth status >/dev/null 2>&1 || die "gh is not logged in"
   [ "$(git ls-remote --tags origin "refs/tags/$TAG" | cut -f1)" = "$(git rev-parse "refs/tags/$TAG")" ] \
     || die "push $TAG first: origin does not have it at the same commit"
@@ -249,5 +253,31 @@ for path, zip_name in (('/download/addon', 'vanatell-%s.zip' % tag), ('/download
     if r.status != 302 or not location.endswith('/download/%s/%s' % (tag, zip_name)):
         sys.exit('release: %s leads to %r, not %s' % (path, location, zip_name))
 print('release: verified latest.json (%s), %d files by SHA-256 and size, and both download links' % (want['version'], n))
+PY
+
+# 7. The announcement in the Discord's #announcements (embeds off; the links are plain).
+python3 -I - "$VERSION" "$NOTES" <<'PY'
+import json, os, re, sys, urllib.request
+version, notes = sys.argv[1], open(sys.argv[2]).read()
+bullets, current = [], None
+for line in notes.splitlines():
+    if re.match(r'^- ', line):
+        current = line[2:].strip(); bullets.append(current)
+    elif line.startswith('  ') and bullets and line.strip():
+        bullets[-1] += ' ' + line.strip()
+body = '\n'.join('• ' + b for b in bullets)
+text = ('## VanaTell update\n**Addon %s** for Windower and Ashita\n%s\n'
+        'Type `//vt update` in game (on Ashita, `/vt update`). New to it? Download it for Windower '
+        '(<https://vanatell.com/download/addon>) or Ashita (<https://vanatell.com/download/ashita>).' % (version, body))
+if len(text) > 2000:
+    text = text[:1900].rsplit('\n', 1)[0] + '\nThe rest: <https://github.com/rshelnutt/vanatell/releases/tag/v%s>' % version
+req = urllib.request.Request(os.environ['VANATELL_DISCORD_ANNOUNCE_WEBHOOK'] + '?wait=true', method='POST',
+    data=json.dumps({'content': text, 'flags': 4, 'allowed_mentions': {'parse': []}}).encode(),
+    headers={'Content-Type': 'application/json', 'User-Agent': 'DiscordBot (https://vanatell.com, 1.0)'})
+try:
+    msg = json.loads(urllib.request.urlopen(req, timeout=30).read())
+except Exception as e:
+    sys.exit('release: the release is out, but the Discord announcement failed (%s); post it by hand' % e)
+print('release: announced in the Discord (message %s)' % msg['id'])
 PY
 echo "release: done. Commit and push the cache key change in $SITE/src/index.ts."

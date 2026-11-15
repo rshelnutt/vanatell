@@ -36,6 +36,12 @@ The zips, as the tool builds them:
 
 ## [Unreleased]
 
+## [0.3.6] - 2026-11-15
+
+### Fixed
+
+- Auto-translate phrases reach the app marked, so it shows them with their green and red brackets.
+
 ## [0.3.5] - 2026-11-15
 
 ### Fixed
@@ -188,7 +194,8 @@ The zips, as the tool builds them:
 - Case-insensitive pair codes: upper or lower case both work, and dashes or
   spaces copied from the phone are ignored.
 
-[Unreleased]: https://github.com/rshelnutt/vanatell/compare/v0.3.5...HEAD
+[Unreleased]: https://github.com/rshelnutt/vanatell/compare/v0.3.6...HEAD
+[0.3.6]: https://github.com/rshelnutt/vanatell/compare/v0.3.5...v0.3.6
 [0.3.5]: https://github.com/rshelnutt/vanatell/compare/v0.3.4...v0.3.5
 [0.3.4]: https://github.com/rshelnutt/vanatell/compare/v0.3.3...v0.3.4
 [0.3.3]: https://github.com/rshelnutt/vanatell/compare/v0.3.2...v0.3.3
