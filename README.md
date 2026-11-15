@@ -38,6 +38,18 @@ Japanese chat is carried both ways: Japanese lines show on your phone as written
 
 Say, shout, yell, emotes and system messages stay in game.
 
+## Security
+
+- **No account to steal.** No email, password or name. Your phone and PC pair with two random tokens, and the server keeps only a one-way hash of each, never the tokens.
+- **Only chat leaves the game.** Tells, party and both linkshells. Never say, shout or yell, your inventory, gil or position, and nothing from your Square Enix account.
+- **Never writes packets.** The addon never writes or injects game packets. It reads chat, and from your phone it can only type `/tell`, `/p`, `/l` and `/l2`, the way you would at the keyboard.
+- **Encrypted in transit and at rest.** Every connection uses TLS, and the addon checks the server's certificate itself against `relay-roots.txt`. Stored lines are encrypted on Cloudflare's network.
+- **Little kept, deleted on request.** The server keeps the newest 2,000 lines per account so your phone can catch up. **Unpair this phone** in the app deletes your account and everything stored, at once.
+- **No tracking.** No analytics, ads, trackers or third-party SDKs, in the addon or the apps.
+- **Read it yourself.** Every line of this addon is here in plain Lua. `//vt update` checks each file's SHA-256 against the published list before installing it.
+
+The full detail: [What is sent and what is not](#what-is-sent-and-what-is-not), and [vanatell.com/privacy](https://vanatell.com/privacy).
+
 ## Help and community
 
 Join the VanaTell server on Discord: [discord.gg/xfAJzhhN6D](https://discord.gg/xfAJzhhN6D)
@@ -146,7 +158,7 @@ To update by hand instead, download the zip from [Releases](../../releases) as i
 
 **On your PC**
 
-- `addons/vanatell/data/settings.xml` holds the relay address and this PC's pairing token in plain text. Treat it like a password. `//vt unpair` wipes the token.
+- `addons/vanatell/data/settings.xml` holds this PC's pairing token in plain text. Treat it like a password. `//vt unpair` wipes the token.
 - On Ashita that file is `config/addons/vanatell/settings.json` in the Ashita folder, shared by all your characters. Treat it like a password too. `/vt unpair` wipes the token.
 - Lines that arrive while the relay is out of reach wait in memory, up to 500, and are never written to disk.
 
