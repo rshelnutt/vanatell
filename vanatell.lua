@@ -14,7 +14,7 @@ in this folder for what you may and may not do with it.
 -- is pumped from prerender and never blocks.
 _addon.name = 'vanatell'
 _addon.command = 'vt'
-_addon.version = '0.3.6'
+_addon.version = '0.3.7'
 
 local config = require('config')
 
@@ -985,12 +985,30 @@ end)
 
 -- The chunk handlers block one packet only: the reply to a /lsmes or
 -- /ls2mes the addon typed itself (0x0CC). Every other packet goes through.
+-- A chat chunk the game sends or receives again: FFXI re-sends a chunk until
+-- it is acknowledged, and Windower sees each copy. A copy is byte for byte the
+-- same, header sequence number included; a new line, even with the same words,
+-- has its own sequence number. Copies seen within CHUNK_REPEAT seconds are
+-- relayed once.
+local CHUNK_REPEAT = 10
+local recent_chunks = {}
+local function repeated(id, data)
+  local t = now()
+  for key, at in pairs(recent_chunks) do
+    if t - at > CHUNK_REPEAT then recent_chunks[key] = nil end
+  end
+  local key = id .. ':' .. data
+  if recent_chunks[key] then return true end
+  recent_chunks[key] = t
+  return false
+end
+
 windower.register_event('incoming chunk', function(id, data)
   if id == 0x0CC then
     if on_linkshell_message(data) then return true end
     return
   end
-  if id ~= 0x017 then return end
+  if id ~= 0x017 or repeated(id, data) then return end
   local record = chat.parse_incoming(data)
   if not record then return end
   local me = player_name()
@@ -1041,7 +1059,7 @@ windower.register_event('logout', function()
 end)
 
 windower.register_event('outgoing chunk', function(id, data, modified, injected, blocked)
-  if (id ~= 0x0B5 and id ~= 0x0B6) or blocked then return end
+  if (id ~= 0x0B5 and id ~= 0x0B6) or blocked or repeated(id, data) then return end
   local record = chat.parse_outgoing(id, data)
   if not record or take_echo(record) then return end
   relay_line(record.channel, 'out', player_name() or NULL, record.target or NULL, record.text)
