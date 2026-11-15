@@ -104,7 +104,7 @@ To pair again later, open **Settings** in the app and tap **Generate new pairing
 `//vt status` (`/vt status` on Ashita) prints, for example:
 
 ```
-VanaTell: version: 0.3.0
+VanaTell: version: X.Y.Z
 VanaTell: paired: yes (account ...)
 VanaTell: enabled: yes
 VanaTell: connection: connected
@@ -114,9 +114,9 @@ VanaTell: linkshells: 1=KupoKnights 2=(none)
 
 ## Updating
 
-Each time it loads, the addon asks vanatell.com once for the newest version number. If there is a newer one, it says so in the game log, for example `VanaTell 0.3.1 is available: type //vt update`. Nothing is downloaded until you type it.
+Each time it loads, the addon asks vanatell.com once for the newest version number. If there is a newer one, it says so in the game log, for example `VanaTell X.Y.Z is available: type //vt update`. Nothing is downloaded until you type it.
 
-`//vt update` (on Ashita, `/vt update`) downloads only the files that changed, checks each one's size and SHA-256 against the list vanatell.com publishes, copies the files it replaces into `backup/` in the addon folder, puts the new ones in place and reloads the addon, which then says `VanaTell: updated to 0.3.1`. If anything fails, no file is changed and the version you have keeps running. Your settings and pairing are never touched. You can type it any time; with the newest version it says `already up to date`.
+`//vt update` (on Ashita, `/vt update`) downloads only the files that changed, checks each one's size and SHA-256 against the list vanatell.com publishes, copies the files it replaces into `backup/` in the addon folder, puts the new ones in place and reloads the addon, which then says `VanaTell: updated to X.Y.Z`. If anything fails, no file is changed and the version you have keeps running. Your settings and pairing are never touched. You can type it any time; with the newest version it says `already up to date`.
 
 `//vt rollback` (`/vt rollback`) puts back the files the last update replaced and reloads.
 
@@ -172,7 +172,7 @@ Everything travels over an encrypted connection, and the addon checks the relay'
 
 VanaTell follows [semantic versioning](https://semver.org). `//vt status` (`/vt status` on Ashita) shows the version you have, and [CHANGELOG.md](CHANGELOG.md) lists what changed in each one. Until 1.0, 0.x releases may change behaviour between minor versions.
 
-Each release is published on the [Releases](../../releases) page as two zips: `vanatell-vX.Y.Z.zip` for Windower and `vanatell-ashita-vX.Y.Z.zip` for Ashita, for example `vanatell-v0.3.1.zip` and `vanatell-ashita-v0.3.1.zip`. Each holds exactly the `vanatell` addon folder: unzip the Windower one into `Windower4/addons/` and the Ashita one into `Ashita/addons/`.
+Each release is published on the [Releases](../../releases) page as two zips: `vanatell-vX.Y.Z.zip` for Windower and `vanatell-ashita-vX.Y.Z.zip` for Ashita. Each holds exactly the `vanatell` addon folder: unzip the Windower one into `Windower4/addons/` and the Ashita one into `Ashita/addons/`.
 
 ## Licence
 
