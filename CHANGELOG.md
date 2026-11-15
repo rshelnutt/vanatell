@@ -36,6 +36,13 @@ The zips, as the tool builds them:
 
 ## [Unreleased]
 
+## [0.3.5] - 2026-11-15
+
+### Fixed
+
+- Accented letters (¿ ¡ á é í ó ú ñ ü ç and the rest of Latin-1) show correctly in the app, and typed on the
+  phone they reach the game, instead of becoming ?.
+
 ## [0.3.4] - 2026-11-15
 
 ### Changed
@@ -181,7 +188,8 @@ The zips, as the tool builds them:
 - Case-insensitive pair codes: upper or lower case both work, and dashes or
   spaces copied from the phone are ignored.
 
-[Unreleased]: https://github.com/rshelnutt/vanatell/compare/v0.3.4...HEAD
+[Unreleased]: https://github.com/rshelnutt/vanatell/compare/v0.3.5...HEAD
+[0.3.5]: https://github.com/rshelnutt/vanatell/compare/v0.3.4...v0.3.5
 [0.3.4]: https://github.com/rshelnutt/vanatell/compare/v0.3.3...v0.3.4
 [0.3.3]: https://github.com/rshelnutt/vanatell/compare/v0.3.2...v0.3.3
 [0.3.2]: https://github.com/rshelnutt/vanatell/compare/v0.3.1...v0.3.2

@@ -14,7 +14,7 @@ in this folder for what you may and may not do with it.
 -- is pumped from prerender and never blocks.
 _addon.name = 'vanatell'
 _addon.command = 'vt'
-_addon.version = '0.3.4'
+_addon.version = '0.3.5'
 
 local config = require('config')
 

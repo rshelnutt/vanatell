@@ -29,8 +29,10 @@ CODE = '''
 -- hand. To change it, edit the script and run, from the addon folder:
 --   python3 tools/gen_sjis.py
 
--- Shift-JIS for vanatell: FFXI's chat is Microsoft's cp932, the relay and
--- the phone speak UTF-8. Plain Lua 5.1, no Windower API.
+-- Shift-JIS for vanatell: FFXI's chat is Microsoft's cp932 plus FFXI's own
+-- row for Western letters (lead byte 0x85: Latin-1 U+00A0-U+00FF, such as
+-- á é ñ ¿); the relay and the phone speak UTF-8. Plain Lua 5.1, no
+-- Windower API.
 --   sjis.decode(bytes) -> utf8      cp932 text to UTF-8
 --   sjis.encode(utf8) -> bytes      UTF-8 text to cp932
 --   sjis.decode_char(s, i) -> utf8, length   the one character at byte i
@@ -125,7 +127,7 @@ local function sequence_length(b)
   return nil
 end
 
--- Each UTF-8 character cp932 has becomes its code; any other character
+-- Each UTF-8 character the game has becomes its code; any other character
 -- (emoji, say) and each malformed byte becomes '?'.
 function sjis.encode(text)
   local t = encode_table()
@@ -152,6 +154,19 @@ def check(cond, message):
         sys.exit('gen_sjis: ' + message)
 
 
+# FFXI's Western letters, outside cp932: the retail client (Windower, captured 2026-11-15) typed and received
+# "¿¡áéíóúÁÉÍÓÚñÑüÜç" as 85 80, 85 61, 85 C0, 85 C8, 85 CC, 85 D2, 85 D9, 85 A0, 85 A8, 85 AC, 85 B2, 85 B9,
+# 85 D0, 85 B0, 85 DB, 85 BB, 85 C6, in a tell and on LS1: lead byte 0x85 (a row cp932 leaves empty) holds
+# Latin-1 U+00A0-U+00FF, U+00A0-U+00BE at trail = code - 0x40, U+00BF at 0x80 (0x7F is never a trail) and
+# U+00C0-U+00FF at trail = code - 0x21.
+def ffxi_latin():
+    table = {}
+    for cp in range(0xA0, 0x100):
+        trail = cp - 0x40 if cp < 0xBF else 0x80 if cp == 0xBF else cp - 0x21
+        table[bytes([0x85, trail])] = chr(cp)
+    return table
+
+
 def decoded_table():
     table = {}
     for lead in LEADS:
@@ -164,6 +179,10 @@ def decoded_table():
             check(len(char) == 1, 'code %s decodes to more than one character' % code.hex())
             check(0x80 <= ord(char) <= 0xFFFF, 'code %s decodes outside U+0080-U+FFFF' % code.hex())
             table[code] = char
+    latin = ffxi_latin()
+    for code in latin:
+        check(code not in table, 'cp932 already has %s, where FFXI puts a Latin letter' % code.hex())
+    table.update(latin)
     return table
 
 
@@ -214,6 +233,8 @@ def main():
     for code in sorted(table):
         lowest.setdefault(table[code], code)
     for char, code in lowest.items():
+        if code[0] == 0x85:   # FFXI's own row: Python's cp932 has none of it
+            continue
         check(char.encode('cp932') == code, 'Python encodes U+%04X as %s, not %s'
               % (ord(char), char.encode('cp932').hex(), code.hex()))
 
