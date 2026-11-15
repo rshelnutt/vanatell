@@ -1,0 +1,121 @@
+name: "\U0001F41B Bug Report"
+description: Report a bug or unexpected behavior in VanaTell
+title: "[BUG] "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting this bug! Please fill out the sections below so we can investigate.
+
+        Before submitting, please check:
+        - You've searched [existing issues](https://github.com/rshelnutt/vanatell/issues?q=is%3Aissue+state%3Aopen+label%3Abug) to make sure this hasn't been reported yet.
+
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Preflight Checklist
+      options:
+        - label: I have searched [existing issues](https://github.com/rshelnutt/vanatell/issues?q=is%3Aissue+state%3Aopen+label%3Abug) and this hasn't been reported yet
+          required: true
+        - label: This is a single bug report (please file separate reports for different bugs)
+          required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: What's Wrong?
+      description: Describe what's happening that shouldn't be
+      placeholder: |
+        A tell I sent from the app never showed up in game...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What Should Happen?
+      description: Describe the expected behavior
+      placeholder: The tell should be typed in game and show as sent in the app
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to Reproduce
+      description: Please provide clear, numbered steps that anyone can follow to reproduce the issue.
+      placeholder: |
+        1. Open a tell conversation in the app
+        2. Type a message and tap Send
+        3. Check the game log
+        4. The tell is not there
+    validations:
+      required: true
+
+  - type: textarea
+    id: error_output
+    attributes:
+      label: Error Messages/Logs
+      description: If you see any error messages, paste them here (the game log lines that start with "VanaTell:", and the output of //vt status, or /vt status on Ashita)
+      placeholder: Paste any error output or log lines here.
+      render: shell
+    validations:
+      required: false
+
+  - type: dropdown
+    id: setup
+    attributes:
+      label: Setup
+      description: Which addon and which app are you using?
+      options:
+        - Windower + iPhone
+        - Windower + Android
+        - Ashita + iPhone
+        - Ashita + Android
+    validations:
+      required: true
+
+  - type: input
+    id: versions
+    attributes:
+      label: Versions
+      description: The addon's version from //vt status (/vt status on Ashita) and the app's from the bottom of Settings
+      placeholder: "Addon X.Y.Z, app X.Y.Z"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: feature_area
+    attributes:
+      label: Feature Area
+      description: Which part of VanaTell is affected?
+      options:
+        - Tells
+        - Party chat
+        - Linkshells
+        - Pairing
+        - Notifications
+        - Connection
+        - Updating the addon
+        - UI/UX
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: screenshots
+    attributes:
+      label: Screenshots
+      description: If applicable, drag and drop screenshots here
+    validations:
+      required: false
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional Context
+      description: Anything else that might help us understand the issue?
+    validations:
+      required: false
