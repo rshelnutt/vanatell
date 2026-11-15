@@ -9,6 +9,8 @@ body:
       value: |
         Thanks for suggesting a feature! Please help us understand your use case.
 
+        Every feature comes to Windower, Ashita, iPhone and Android alike, so there is no need to pick a platform.
+
         Before submitting, please check if this feature has already been requested by searching [existing requests](https://github.com/rshelnutt/vanatell/issues?q=is%3Aissue+label%3Afeat).
 
   - type: checkboxes
@@ -50,20 +52,6 @@ body:
         Currently I...
     validations:
       required: false
-
-  - type: dropdown
-    id: platform
-    attributes:
-      label: Platform
-      description: Which part of VanaTell should this feature be in?
-      options:
-        - Addon (Windower or Ashita)
-        - iPhone app
-        - Android app
-        - Both apps
-        - Addon and apps
-    validations:
-      required: true
 
   - type: dropdown
     id: feature_area
