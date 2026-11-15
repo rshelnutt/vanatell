@@ -14,7 +14,7 @@ in this folder for what you may and may not do with it.
 -- is pumped from prerender and never blocks.
 _addon.name = 'vanatell'
 _addon.command = 'vt'
-_addon.version = '0.3.3'
+_addon.version = '0.3.4'
 
 local config = require('config')
 
@@ -71,7 +71,7 @@ local UPDATE_URL = 'https://vanatell.com/addon/latest.json'
 -- player is not logged in.
 -- Every install talks to the one VanaTell relay; it cannot be changed. A relay address saved by an older version is
 -- dropped. (Tests put a stand-in relay in __vanatell_test.)
-local RELAY_URL = hooks.relay_url or 'wss://vanatell.rob-shelnutt.workers.dev'
+local RELAY_URL = hooks.relay_url or 'wss://relay.vanatell.com'
 local settings = config.load({token = '', account_id = '', enabled = true, ls_slots = ''})
 if type(settings.ls_slots) ~= 'string' then settings.ls_slots = '' end
 settings.url = nil

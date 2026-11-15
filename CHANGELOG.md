@@ -36,6 +36,12 @@ The zips, as the tool builds them:
 
 ## [Unreleased]
 
+## [0.3.4] - 2026-11-15
+
+### Changed
+
+- The addon connects to VanaTell's server at relay.vanatell.com.
+
 ## [0.3.3] - 2026-11-14
 
 ### Changed
@@ -175,7 +181,8 @@ The zips, as the tool builds them:
 - Case-insensitive pair codes: upper or lower case both work, and dashes or
   spaces copied from the phone are ignored.
 
-[Unreleased]: https://github.com/rshelnutt/vanatell/compare/v0.3.3...HEAD
+[Unreleased]: https://github.com/rshelnutt/vanatell/compare/v0.3.4...HEAD
+[0.3.4]: https://github.com/rshelnutt/vanatell/compare/v0.3.3...v0.3.4
 [0.3.3]: https://github.com/rshelnutt/vanatell/compare/v0.3.2...v0.3.3
 [0.3.2]: https://github.com/rshelnutt/vanatell/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/rshelnutt/vanatell/compare/v0.3.0...v0.3.1
