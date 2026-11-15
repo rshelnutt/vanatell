@@ -36,6 +36,11 @@ The zips, as the tool builds them:
 
 ## [Unreleased]
 
+### Changed
+
+- The addon always connects to the VanaTell relay; there is nothing to set.
+  `//vt status` no longer prints a relay line.
+
 ## [0.3.2] - 2026-11-14
 
 ### Fixed
@@ -143,13 +148,11 @@ The zips, as the tool builds them:
 - Party chat on your phone: every party line you receive or send is relayed
   to the VanaTell app, and a party line sent from the app is typed in game
   with `/p`. `//vt help` lists party among the relayed channels.
-- `//vt url default` goes back to the built-in relay after a custom one.
 
 ### Changed
 
 - In-game messages are prefixed `VanaTell:`.
-- The built-in relay address is never printed; `//vt status` says
-  `relay: built-in` unless a custom relay is set.
+- The relay address is never printed.
 - The trust-root bundle is trimmed to the roots the relay can chain to and
   renamed `relay-roots.txt`, so phones and PCs no longer offer to install it.
 - Auto-translate phrases are expanded to their text before relaying.
@@ -163,8 +166,7 @@ The zips, as the tool builds them:
 - Replies from the phone: a tell, an LS1 line or an LS2 line sent from the app
   is typed in game for you.
 - Pairing by code: `//vt pair CODE` with the code the app shows.
-- A built-in relay address, so there is nothing to configure. `//vt url` is an
-  override for people who run their own relay.
+- A built-in relay address, so there is nothing to configure.
 - Linkshell detection: the name of the linkshell equipped in slot 1 and in
   slot 2, and whether each slot has one equipped, sent to the app and shown on
   the `linkshells:` line of `//vt status`.

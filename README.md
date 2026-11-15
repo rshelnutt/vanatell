@@ -28,7 +28,7 @@
 
 ## What it does
 
-VanaTell is a Windower and Ashita addon that sends your tells, party chat and linkshell chat to the VanaTell app on your iPhone or Android phone, so you can step away from the PC and still answer.
+Partner addon for the VanaTell app (iOS/Android). You need both: this addon in Windower or Ashita, and the app on your iPhone or Android phone. The addon sends your tells, party chat and linkshell chat to the app, so you can step away from the PC and still answer.
 
 - **Tells, party, LS1 and LS2 on your phone.** Every tell you receive or send, and every party, LS1 and LS2 line, shows up in the app. Lines you type at the keyboard show up there too.
 - **Answer from the phone.** Send a tell, a party line, an LS1 line or an LS2 line from the app, and the addon types it in game for you.
@@ -100,13 +100,11 @@ To pair again later, open **Settings** in the app and tap **Generate new pairing
 | `//vt update` | `/vt update` | Install the newest version, if there is one, and reload |
 | `//vt rollback` | `/vt rollback` | Go back to the version before the last update, and reload |
 | `//vt help` | `/vt help` | List the commands in game |
-| `//vt url wss://host` | `/vt url wss://host` | Advanced: use your own relay. `//vt url default` (`/vt url default`) goes back to the built-in one |
 
 `//vt status` (`/vt status` on Ashita) prints, for example:
 
 ```
 VanaTell: version: 0.3.0
-VanaTell: relay: built-in
 VanaTell: paired: yes (account ...)
 VanaTell: enabled: yes
 VanaTell: connection: connected
@@ -159,8 +157,6 @@ Everything travels over an encrypted connection, and the addon checks the relay'
 **`//lua load vanatell` says the addon does not exist.** The folder must be named exactly `vanatell`, with `vanatell.lua` directly inside it: `Windower4/addons/vanatell/vanatell.lua`. A zip from GitHub's **Code** button unzips as `vanatell-main`; rename it to `vanatell`.
 
 **`/addon load vanatell` fails on Ashita.** The folder must be named exactly `vanatell`, with `vanatell.lua` directly inside it: `Ashita/addons/vanatell/vanatell.lua`. Use `vanatell-ashita-vX.Y.Z.zip` from [Releases](../../releases); the Windower zip and a zip from GitHub's **Code** button are the Windower addon and do not load in Ashita.
-
-**`pairing failed: http 404`.** The addon is using an old relay address saved in `data/settings.xml`. Type `//vt url default`, then `//vt pair CODE` again. On Ashita, type `/vt url default`, then `/vt pair CODE`.
 
 **`pairing failed: invalid_code`.** The code was mistyped, has run out or was already used. Get a new one in the app.
 

@@ -69,11 +69,12 @@ local UPDATE_URL = 'https://vanatell.com/addon/latest.json'
 
 -- Saved with 'all': the default per-character save does nothing while the
 -- player is not logged in.
--- Every install talks to the one VanaTell relay. //vt url overrides it for people running their own.
-local DEFAULT_URL = 'wss://vanatell.rob-shelnutt.workers.dev'
-local settings = config.load({url = DEFAULT_URL, token = '', account_id = '', enabled = true, ls_slots = ''})
+-- Every install talks to the one VanaTell relay; it cannot be changed. A relay address saved by an older version is
+-- dropped. (Tests put a stand-in relay in __vanatell_test.)
+local RELAY_URL = hooks.relay_url or 'wss://vanatell.rob-shelnutt.workers.dev'
+local settings = config.load({token = '', account_id = '', enabled = true, ls_slots = ''})
 if type(settings.ls_slots) ~= 'string' then settings.ls_slots = '' end
-if type(settings.url) ~= 'string' or settings.url == '' then settings.url = DEFAULT_URL end
+settings.url = nil
 
 -- state: unpaired | disabled | waiting | connecting | open | unauthorized
 local app = {
@@ -138,7 +139,7 @@ end
 -- A stored token that is not in the relay's format (a hand-edited settings
 -- file, say) counts as no token.
 local function has_credentials()
-  return is_set(settings.url) and is_token(settings.token)
+  return is_token(settings.token)
 end
 
 local function is_enabled()
@@ -725,7 +726,7 @@ end
 
 local function connect()
   local client = ws.new{
-    url = settings.url .. '/v1/ws?role=addon',
+    url = RELAY_URL .. '/v1/ws?role=addon',
     headers = {{'Authorization', 'Bearer ' .. settings.token}},
     cafile = CA_FILE,
     on_open = on_open,
@@ -810,24 +811,9 @@ end
 -- Commands.
 ---------------------------------------------------------------------------
 
--- -> 'scheme://host[:port]' (lowercase, default port dropped) | nil, err
-local function normalise_url(raw)
-  if raw:find('[^!-~]') then return nil, 'url must be printable ASCII with no spaces' end
-  local parsed, err = ws.parse_url(raw)
-  if not parsed then return nil, err end
-  if parsed.scheme == 'http' or parsed.scheme == 'https' then
-    return nil, 'use wss:// (or ws://localhost for development)'
-  end
-  if parsed.path ~= '/' then return nil, 'url must not include a path' end
-  local port = ''
-  if parsed.port ~= (parsed.secure and 443 or 80) then port = ':' .. parsed.port end
-  return parsed.scheme .. '://' .. parsed.host .. port
-end
-
 local HELP = {
   'relays tells, party, LS1 and LS2 chat to the VanaTell app',
   'commands:',
-  '//vt url <wss://host> | default - use another relay, or the built-in one',
   '//vt pair <code> - pair with the code shown on your phone',
   '//vt status - show the connection state',
   '//vt on | //vt off - start or stop relaying',
@@ -852,27 +838,9 @@ end
 
 local commands = {}
 
--- Windower splits arguments on spaces; they are joined back so a url with a
--- space in it is rejected rather than cut short.
-function commands.url(...)
-  local raw = table.concat({...}, ' ')
-  local url, err
-  if raw == 'default' then url = DEFAULT_URL else url, err = normalise_url(raw) end
-  if not url then return log('invalid url: ' .. err) end
-  cancel_pairing()
-  settings.url = url
-  save()
-  log(url == DEFAULT_URL and 'relay: built-in' or ('relay url set to ' .. url))
-  if has_credentials() and is_enabled() then
-    drop_client(1000, 'url changed')
-    start()
-  end
-end
-
 -- The request is pumped from prerender. Its callbacks do nothing once it is
 -- no longer app.pairing.
 function commands.pair(code)
-  if not is_set(settings.url) then return log('set the relay url first: //vt url wss://<host>') end
   -- Case-insensitive, and dashes or spaces from the phone's display are dropped, as the relay does.
   -- [A-Za-z0-9] is %w without the locale.
   code = type(code) == 'string' and code:upper():gsub('[%s%-]', '') or ''
@@ -882,7 +850,7 @@ function commands.pair(code)
   if app.pairing then return log('pairing already in progress') end
   local req, err
   req, err = ws.http_post{
-    url = pair_url(settings.url),
+    url = pair_url(RELAY_URL),
     body = json.encode({code = code}),
     cafile = CA_FILE,
     on_done = function(status, body)
@@ -921,7 +889,6 @@ end
 
 function commands.status()
   log('version: ' .. _addon.version)
-  log(settings.url == DEFAULT_URL and 'relay: built-in' or ('relay url: ' .. (is_set(settings.url) and settings.url or 'not set')))
   if is_token(settings.token) then
     log('paired: yes (account ' .. (is_set(settings.account_id) and settings.account_id or 'unknown') .. ')')
   else
