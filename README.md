@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/icon-512.png" width="160" alt="VanaTell" />
+  <img src="assets/icon-transparent.png" width="160" alt="VanaTell" />
 </p>
 
 <h1 align="center">VanaTell</h1>
