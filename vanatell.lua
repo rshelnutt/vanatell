@@ -37,7 +37,8 @@ local AUTO_UPDATE_GAP = 600 -- seconds between two updates started by the relay'
 local MAX_FRAMES = 20      -- frames decoded per prerender
 
 local QUEUE_MAX = 500         -- chat frames held while disconnected
-local ECHO_WINDOW = 10        -- seconds a phone send waits for the game's copy of it
+local ECHO_WINDOW = 30        -- seconds a phone send waits for the game's copy of it (the relay's window)
+local SEAL_BUDGET = 0.002     -- seconds of sealing a prerender, past the first line
 local EXECUTED_IDS_MAX = 200  -- send ids remembered, so a replayed id runs once
 local RELAY_MESSAGE_MAX = 120 -- characters of a relay error message shown in game
 local ACCOUNT_ID_MAX = 64     -- longest accountId accepted from the relay
@@ -99,6 +100,7 @@ local app = {
   backoff = BACKOFF_MIN,
   next_attempt = 0,    -- when waiting: the time of the next connect
   queue = {},          -- encoded chat frames held while disconnected
+  sealing = {},        -- lines captured with keys, waiting for the next prerender to seal them
   queue_full = false,  -- the queue full line was logged since the last flush
   executed = {},       -- send id -> true, for the ids in executed_order
   executed_order = {}, -- the last EXECUTED_IDS_MAX executed send ids, oldest first
@@ -118,6 +120,7 @@ local app = {
     reveal = nil,      -- a reveal waiting for A to be worked out again after a reload
     completed = 0,     -- reveals that matched their commit, this load
     waited = {},       -- kxId -> true: answered with wait
+    seq = 0,           -- lines sealed since load
   },
   auto_update_at = nil, -- when the relay's refusal last started an update
   forced_said = false, -- the refusal's updating line was logged since load
@@ -418,6 +421,7 @@ end
 local function delete_keys()
   local s = app.e2e
   s.keys, s.kx, s.sent, s.job, s.reveal = nil, nil, {}, nil, nil
+  app.sealing = {} -- captured under keys that are gone
   os.remove(KEY_FILE)
   os.remove(KEY_FILE .. '.tmp')
   settings.recover_key, settings.recover_key_id = '', ''
@@ -670,6 +674,23 @@ local function chat_frame(channel, direction, sender, target, text, ts)
                        {'ts', ts}}
 end
 
+-- The same frame, sealed: no text; the time, then the envelope. The text
+-- gets the relay's rules first; a line with nothing left is dropped (nil).
+local function sealed_frame(line)
+  local text = e2e.clean_text(line.text)
+  local keys = app.e2e.keys
+  if not text or not keys then return nil end
+  local s = app.e2e
+  s.seq = s.seq + 1
+  local sender = line.sender ~= NULL and line.sender or nil
+  local target = line.target ~= NULL and line.target or nil
+  local meta = {key_id = keys.keyId, kind = e2e.kind(line.channel), direction = line.direction, sender = sender, target = target}
+  local envelope = e2e.seal_line(keys, meta, text, line.ts, s.seq)
+  local head = encode_fields{{'type', 'chat'}, {'channel', line.channel}, {'linkshell', linkshell_name(line.channel, line.ts)},
+                             {'direction', line.direction}, {'sender', line.sender}, {'target', line.target}, {'ts', line.ts}}
+  return head:sub(1, -2) .. ',"e2e":' .. envelope .. '}'
+end
+
 -- channel: the slot a linkshell send was typed in, when it is not the one
 -- the relay asked for.
 local function ack(client, id, ok, err, channel)
@@ -743,21 +764,53 @@ end
 
 local confirm_lone -- set with the linkshell lookup, below
 
+-- A line on its way: sealed at the start of the next prerender if it was
+-- captured while the keys existed, else in plaintext now, as it was said
+-- unencrypted.
+local function send_line(line)
+  if line.keyed then
+    app.sealing[#app.sealing + 1] = line
+  else
+    deliver(chat_frame(line.channel, line.direction, line.sender, line.target, line.text, line.ts))
+  end
+end
+
+-- At the start of each prerender, before the socket is pumped: the lines
+-- waiting to be sealed, in the order they were captured, until about
+-- SEAL_BUDGET of sealing (always at least one), so a burst spills into the
+-- next frames instead of hitching this one. A single line goes out in the
+-- frame it would have gone in plaintext.
+local function seal_lines()
+  local lines = app.sealing
+  if #lines == 0 then return end
+  local started, done = os.clock(), 0
+  while done < #lines and (done == 0 or os.clock() - started < SEAL_BUDGET) do
+    done = done + 1
+    local frame = sealed_frame(lines[done])
+    if frame then deliver(frame) end
+  end
+  local rest = {}
+  for i = done + 1, #lines do rest[#rest + 1] = lines[i] end
+  app.sealing = rest
+end
+
 -- A captured chat line on its way to the relay. A linkshell line captured
 -- while the game is being asked which shell is in which slot waits up to
 -- LS_LOOKUP_HOLD for the answer, so it is named by it. With one shell
 -- equipped, a linkshell line itself says which slot that shell is in.
 local function relay_line(channel, direction, sender, target, text)
   local ls = app.ls
+  local line = {channel = channel, direction = direction, sender = sender, target = target, text = text,
+                ts = math.floor(now() * 1000), keyed = app.e2e.keys ~= nil}
   if channel == 'ls1' or channel == 'ls2' then
     if not ls.known then confirm_lone(channel) end
     local look = ls.lookup
     if look and now() < look.hold_until and #ls.held < LS_HELD_MAX then
-      ls.held[#ls.held + 1] = {channel, direction, sender, target, text, math.floor(now() * 1000)}
+      ls.held[#ls.held + 1] = line
       return
     end
   end
-  deliver(chat_frame(channel, direction, sender, target, text))
+  send_line(line)
 end
 
 -- Drops expired echo entries; -> the live ones.
@@ -1006,7 +1059,7 @@ local function release_lines()
   local ls = app.ls
   local held = ls.held
   ls.held = {}
-  for _, line in ipairs(held) do deliver(chat_frame(line[1], line[2], line[3], line[4], line[5], line[6])) end
+  for _, line in ipairs(held) do send_line(line) end
 end
 
 -- The sends that waited for the lookup.
@@ -1505,6 +1558,7 @@ windower.register_event('unload', function()
 end)
 
 windower.register_event('prerender', function()
+  seal_lines()
   if app.pairing then app.pairing:pump() end
   updater:pump()
   local t = now()

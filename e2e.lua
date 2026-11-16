@@ -640,6 +640,28 @@ function e2e.send_ad(key_id, client_id, kind, target)
   return lp(LABEL.send) .. lp(key_id) .. lp(client_id) .. lp(kind) .. lp(lower(target))
 end
 
+-- The relay's text rules for a line, which it cannot apply to an encrypted
+-- one: line breaks and tabs become spaces, control characters go, and
+-- white space (the relay's, full-width spaces included) is trimmed from
+-- both ends. -> the text, or nil when nothing is left.
+local SPACE = {['\32'] = true, ['\9'] = true, ['\10'] = true, ['\11'] = true, ['\12'] = true, ['\13'] = true,
+               ['\194\160'] = true, ['\225\154\128'] = true, ['\226\128\168'] = true, ['\226\128\169'] = true,
+               ['\226\128\175'] = true, ['\226\129\159'] = true, ['\227\128\128'] = true, ['\239\187\191'] = true}
+for i = 0x80, 0x8a do SPACE['\226\128' .. char(i)] = true end
+
+function e2e.clean_text(text)
+  if type(text) ~= 'string' then return nil end
+  text = text:gsub('\r\n', ' '):gsub('[\r\n\t]', ' '):gsub('\226\128[\168\169]', ' ')
+  text = text:gsub('[%z\1-\31\127]', ''):gsub('\194[\128-\159]', '')
+  local chars = {}
+  for ch in text:gmatch('[%z\1-\127\192-\255][\128-\191]*') do chars[#chars + 1] = ch end
+  local first, last = 1, #chars
+  while first <= last and SPACE[chars[first]] do first = first + 1 end
+  while last >= first and SPACE[chars[last]] do last = last - 1 end
+  if first > last then return nil end
+  return concat(chars, '', first, last)
+end
+
 -- A JSON string: only '"' and '\' are escaped, and any control character
 -- as \u00xx; '/' and non-ASCII are written as they are.
 local function json_string(s)
