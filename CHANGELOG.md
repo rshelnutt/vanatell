@@ -36,6 +36,22 @@ The zips, as the tool builds them:
 
 ## [Unreleased]
 
+## [0.3.9] - 2026-11-16
+
+### Added
+
+- The addon updates itself when the relay requires a newer version. It says
+  `VanaTell: encryption is on for this account; updating to the newest version` and
+  runs the same update as `//vt update` (on Ashita, `/vt update`), with the same checks,
+  at most once every 10 minutes. Lines you say meanwhile are kept across its reload and
+  sent once it reconnects. With `//vt off` it never updates by itself.
+
+### Changed
+
+- The connection counts as open once the relay answers: only then does the game log say
+  `connected to relay` and the lines held meanwhile go out. A connection the relay never
+  answers is dropped after 90 seconds and tried again.
+
 ## [0.3.8] - 2026-11-16
 
 ### Changed
@@ -207,7 +223,8 @@ The zips, as the tool builds them:
 - Case-insensitive pair codes: upper or lower case both work, and dashes or
   spaces copied from the phone are ignored.
 
-[Unreleased]: https://github.com/rshelnutt/vanatell/compare/v0.3.8...HEAD
+[Unreleased]: https://github.com/rshelnutt/vanatell/compare/v0.3.9...HEAD
+[0.3.9]: https://github.com/rshelnutt/vanatell/compare/v0.3.8...v0.3.9
 [0.3.8]: https://github.com/rshelnutt/vanatell/compare/v0.3.7...v0.3.8
 [0.3.7]: https://github.com/rshelnutt/vanatell/compare/v0.3.6...v0.3.7
 [0.3.6]: https://github.com/rshelnutt/vanatell/compare/v0.3.5...v0.3.6

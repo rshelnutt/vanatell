@@ -12,12 +12,13 @@ in this folder for what you may and may not do with it.
 -- connection then runs the same update, at most once in 10 minutes): that
 -- asks again and, when the version is newer, downloads the files that differ
 -- from the ones here, checks each one's size and SHA-256, backs up the files
--- it replaces into backup/, puts the new ones in place and reloads the addon. //vt rollback puts the backed-up files back
--- and reloads. Nothing is written until every download has passed its check,
--- and a failure leaves the files as they were. Only files the manifest names
--- are written, only inside the addon folder, and never data/ (the settings)
--- or backup/. The network work and the hashing are pumped from prerender in
--- bounded steps, so the game never waits on them.
+-- it replaces into backup/, puts the new ones in place and reloads the addon.
+-- //vt rollback puts the backed-up files back and reloads. Nothing is
+-- written until every download has passed its check, and a failure leaves
+-- the files as they were. Only files the manifest names are written, only
+-- inside the addon folder, and never data/ (the settings) or backup/. The
+-- network work and the hashing are pumped from prerender in bounded steps,
+-- so the game never waits on them.
 local update = {}
 
 local floor = math.floor
