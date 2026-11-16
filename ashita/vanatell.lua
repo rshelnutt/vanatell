@@ -20,8 +20,10 @@ in this folder for what you may and may not do with it.
 --   game data  the player from party and player memory, the bags from
 --              inventory memory, linkshell names and colours from item data
 --   settings   one file for this install: config/addons/vanatell/settings.json
---              under the Ashita folder, so every character shares one pairing;
---              queue.json, across an update's reload, sits beside it
+--              under the Ashita folder, so every character shares one pairing,
+--              saved through a temporary file and a rename; the key file
+--              (e2e.json), the entropy seed and queue.json (across an update's
+--              reload) sit beside it
 --   TLS        Ashita ships LuaSec as socket.ssl; the addon asks for ssl
 --   files      ashita.fs for the folders an update writes (backup/, assets/)
 --   randomness Windows' own generator for the addon's private keys, through
@@ -222,12 +224,24 @@ local SETTINGS_FILE = SETTINGS_DIR .. 'settings.json'
 local config = {}
 
 -- config.load([path,] defaults): the defaults, with the value saved for each
--- of their keys. A missing or unreadable file gives the defaults.
+-- of their keys. A missing or unreadable file gives the defaults. A save
+-- interrupted after settings.json was removed leaves settings.json.tmp,
+-- which a load then takes; one left beside settings.json is stale and goes.
 function config.load(path, defaults)
   if type(path) ~= 'string' then defaults = path end
   local settings = {}
   for k, v in pairs(defaults or {}) do settings[k] = v end
+  local tmp = SETTINGS_FILE .. '.tmp'
   local f = io.open(SETTINGS_FILE, 'rb')
+  if f then
+    os.remove(tmp)
+  else
+    f = io.open(tmp, 'rb')
+    if f then
+      f:close()
+      if os.rename(tmp, SETTINGS_FILE) then f = io.open(SETTINGS_FILE, 'rb') else f = io.open(tmp, 'rb') end
+    end
+  end
   if f then
     local text = f:read('*a')
     f:close()
@@ -242,6 +256,9 @@ function config.load(path, defaults)
 end
 
 -- Every save is for all characters: there is one file per Ashita folder.
+-- It goes to settings.json.tmp first, then is renamed over settings.json
+-- (Windows will not rename onto an existing file, so that goes first), so
+-- the token and the recovery key are never left half written.
 function config.save(settings)
   local keys = {}
   for k, v in pairs(settings) do
@@ -253,14 +270,17 @@ function config.save(settings)
   for i, k in ipairs(keys) do parts[i] = json.encode(k) .. ':' .. json.encode(settings[k]) end
   local mkdir = ashita.fs.create_directory or ashita.fs.create_dir
   if not ashita.fs.exists(SETTINGS_DIR) then mkdir(SETTINGS_DIR) end
-  local f = io.open(SETTINGS_FILE, 'wb')
-  if not f then
-    add_to_chat(207, 'VanaTell: could not save settings to config/addons/vanatell/settings.json')
-    return false
+  local tmp = SETTINGS_FILE .. '.tmp'
+  local f = io.open(tmp, 'wb')
+  local written = f and f:write('{' .. table.concat(parts, ',') .. '}\n')
+  if f then f:close() end
+  if written then
+    os.remove(SETTINGS_FILE)
+    if os.rename(tmp, SETTINGS_FILE) then return true end
   end
-  f:write('{' .. table.concat(parts, ',') .. '}\n')
-  f:close()
-  return true
+  os.remove(tmp)
+  add_to_chat(207, 'VanaTell: could not save settings to config/addons/vanatell/settings.json')
+  return false
 end
 
 ---------------------------------------------------------------------------

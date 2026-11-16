@@ -24,6 +24,7 @@ local hooks = rawget(_G, '__vanatell_test') or {}
 local function load_local(name) return hooks[name] or dofile(windower.addon_path .. name .. '.lua') end
 local json, chat, ws = load_local('json'), load_local('chat'), load_local('ws')
 local linkshells, update = load_local('linkshells'), load_local('update')
+local e2e = load_local('e2e')
 local now = hooks.now or require('socket').gettime
 
 local BACKOFF_MIN = 1      -- seconds before the first retry
@@ -70,6 +71,8 @@ local CA_FILE = windower.addon_path .. 'relay-roots.txt'
 local DATA_DIR = rawget(windower, 'data_dir') or (windower.addon_path .. 'data/')
 local QUEUE_FILE = DATA_DIR .. 'queue.json' -- the queue, only across an update's or a rollback's reload
 local QUEUE_SINCE = '0.3.9' -- the first version that reads queue.json back
+-- This pairing's encryption keys, and the exchange in progress (the key file).
+local KEY_FILE = DATA_DIR .. 'e2e.json'
 -- What the newest version is and which files it holds (update.lua).
 local UPDATE_URL = 'https://vanatell.com/addon/latest.json'
 
@@ -78,8 +81,15 @@ local UPDATE_URL = 'https://vanatell.com/addon/latest.json'
 -- Every install talks to the one VanaTell relay; it cannot be changed. A relay address saved by an older version is
 -- dropped. (Tests put a stand-in relay in __vanatell_test.)
 local RELAY_URL = hooks.relay_url or 'wss://relay.vanatell.com'
-local settings = config.load({token = '', account_id = '', enabled = true, ls_slots = ''})
-if type(settings.ls_slots) ~= 'string' then settings.ls_slots = '' end
+-- recover_key and recover_key_id: the recovery key of this pairing's keys
+-- and their key id, kept beside the token so a lost key file is recovered
+-- by itself. e2e_account: the account this PC knows has switched to
+-- encryption (rollbacks below encryption are refused for it).
+local settings = config.load({token = '', account_id = '', enabled = true, ls_slots = '', recover_key = '',
+                              recover_key_id = '', e2e_account = ''})
+for _, key in ipairs({'ls_slots', 'recover_key', 'recover_key_id', 'e2e_account'}) do
+  if type(settings[key]) ~= 'string' then settings[key] = '' end
+end
 settings.url = nil
 
 -- state: unpaired | disabled | waiting | connecting | open | unauthorized
@@ -100,6 +110,11 @@ local app = {
   outage_since = nil,  -- when the outage began
   outage_said = false, -- the connection lost line was logged for this outage
   announced = false,   -- connected to relay was logged since the last deliberate start
+  e2e = {              -- encryption (e2e.lua), from the key file
+    keys = nil,        -- this pairing's keys once an exchange completed
+    kx = nil,          -- the exchange in progress: {kxId =, id =, h =, recover =, a =}
+    sent = {},         -- typed phone sends: {clientId =, id =, typedAt =, ts =}
+  },
   auto_update_at = nil, -- when the relay's refusal last started an update
   forced_said = false, -- the refusal's updating line was logged since load
   no_newer_said = false, -- the refusal's no newer version line was logged since load
@@ -216,6 +231,156 @@ local function encode_fields(fields)
     end
   end
   return '{' .. table.concat(parts, ',') .. '}'
+end
+
+---------------------------------------------------------------------------
+-- The key file: data/e2e.json (Ashita: config/addons/vanatell/e2e.json).
+---------------------------------------------------------------------------
+-- It holds the account it belongs to, this pairing's keys once an exchange
+-- has completed, the exchange in progress (so a reload or a closed game
+-- loses nothing) and the phone sends typed in the last 12 hours. It is
+-- written through e2e.json.tmp and a rename. A file that does not parse, is
+-- malformed, or names another account counts as no file. Only a successful
+-- //vt pair and //vt unpair delete it.
+local function bytes_of(v, n)
+  local raw = type(v) == 'string' and e2e.unb64url(v)
+  if raw and #raw == n then return raw end
+  return nil
+end
+
+local function is_key_id(v)
+  return type(v) == 'string' and #v == 16 and v:find('^[0-9a-f]+$') ~= nil
+end
+
+local KEY_BYTES = {'lineKey', 'lineNonce', 'sendKey', 'recoverKey', 'A', 'B'}
+
+-- The file's keys -> in memory: the 32-byte keys raw, the rest as written.
+local function parse_keys(k)
+  if type(k) ~= 'table' or not is_key_id(k.keyId) or type(k.acked) ~= 'boolean'
+     or type(k.code) ~= 'string' or not k.code:find('^%d%d%d%d %d%d%d%d %d%d%d%d$') then
+    return nil
+  end
+  local keys = {keyId = k.keyId, code = k.code, kxId = k.kxId, mac = k.mac, rmac = k.rmac, doneMac = k.doneMac, acked = k.acked}
+  for _, name in ipairs(KEY_BYTES) do
+    keys[name] = bytes_of(k[name], 32)
+    if not keys[name] then return nil end
+  end
+  if not (bytes_of(k.kxId, 16) and bytes_of(k.mac, 16)) then return nil end
+  if k.rmac ~= nil and not bytes_of(k.rmac, 16) then return nil end
+  if k.doneMac ~= nil and not bytes_of(k.doneMac, 16) then return nil end
+  return keys
+end
+
+local function parse_kx(x)
+  if type(x) ~= 'table' then return nil end
+  local kx = {kxId = x.kxId, id = bytes_of(x.kxId, 16), h = bytes_of(x.h, 32), recover = x.recover}
+  if not (kx.id and kx.h) or (x.recover ~= nil and not is_key_id(x.recover)) then return nil end
+  if x.a ~= nil then
+    kx.a = bytes_of(x.a, 32)
+    if not kx.a then return nil end
+  end
+  return kx
+end
+
+local function is_time(v)
+  return type(v) == 'number' and v == v and v >= 0 and v < 2 ^ 53 and v % 1 == 0
+end
+
+local function parse_sent(list)
+  if list == nil then return {} end
+  if type(list) ~= 'table' then return nil end
+  local sent = {}
+  for i, r in ipairs(list) do
+    if not (type(r) == 'table' and type(r.clientId) == 'string' and is_time(r.id) and r.id >= 1
+            and is_time(r.typedAt) and is_time(r.ts)) then
+      return nil
+    end
+    sent[i] = {clientId = r.clientId, id = r.id, typedAt = r.typedAt, ts = r.ts}
+  end
+  return sent
+end
+
+-- -> {keys =, kx =, sent =} | nil (no file, or one that counts as none)
+local function read_keyfile()
+  if not is_account_id(settings.account_id) then return nil end
+  local f = io.open(KEY_FILE, 'rb')
+  if not f then return nil end
+  local text = f:read('*a')
+  f:close()
+  local ok, t = pcall(json.decode, text or '')
+  if not (ok and type(t) == 'table' and t.v == 1 and t.account == settings.account_id) then return nil end
+  local file = {sent = parse_sent(t.sent)}
+  if not file.sent then return nil end
+  if t.keys ~= nil then
+    file.keys = parse_keys(t.keys)
+    if not file.keys then return nil end
+  end
+  if t.kx ~= nil then
+    file.kx = parse_kx(t.kx)
+    if not file.kx then return nil end
+  end
+  return file
+end
+
+local function ensure_data_dir()
+  if not windower.dir_exists(DATA_DIR) then pcall(windower.create_dir, DATA_DIR) end
+end
+
+-- What app.e2e holds, as the key file: keys in a fixed order.
+local function write_keyfile()
+  local s = app.e2e
+  local keys, kx, sent = NULL, NULL, {}
+  if s.keys then
+    local k = s.keys
+    keys = encode_fields{{'keyId', k.keyId}, {'code', k.code}, {'lineKey', e2e.b64url(k.lineKey)},
+      {'lineNonce', e2e.b64url(k.lineNonce)}, {'sendKey', e2e.b64url(k.sendKey)}, {'recoverKey', e2e.b64url(k.recoverKey)},
+      {'A', e2e.b64url(k.A)}, {'B', e2e.b64url(k.B)}, {'kxId', k.kxId}, {'mac', k.mac}, {'rmac', k.rmac or NULL},
+      {'acked', k.acked}, {'doneMac', k.doneMac}}
+  end
+  if s.kx then
+    local x = s.kx
+    kx = encode_fields{{'kxId', x.kxId}, {'h', e2e.b64url(x.h)}, {'recover', x.recover or NULL},
+                       {'a', x.a and e2e.b64url(x.a) or NULL}}
+  end
+  for i, r in ipairs(s.sent) do
+    sent[i] = encode_fields{{'clientId', r.clientId}, {'id', r.id}, {'typedAt', r.typedAt}, {'ts', r.ts}}
+  end
+  local text = '{"v":1,"account":' .. json.encode(settings.account_id) .. ',"keys":' .. (keys == NULL and 'null' or keys)
+    .. ',"kx":' .. (kx == NULL and 'null' or kx) .. ',"sent":[' .. table.concat(sent, ',') .. ']}'
+  ensure_data_dir()
+  local tmp = KEY_FILE .. '.tmp'
+  local f = io.open(tmp, 'wb')
+  if not f then return end
+  local ok = f:write(text)
+  f:close()
+  os.remove(KEY_FILE) -- Windows will not rename onto an existing file
+  if not (ok and os.rename(tmp, KEY_FILE)) then os.remove(tmp) end
+end
+
+-- Load: the key file into app.e2e; its recovery key and key id go into the
+-- settings when they differ there (a crash between the two writes).
+local function load_keys()
+  local file = read_keyfile() or {sent = {}}
+  local s = app.e2e
+  s.keys, s.kx, s.sent = file.keys, file.kx, file.sent
+  local k = s.keys
+  if k then
+    local recover_key = e2e.b64url(k.recoverKey)
+    if settings.recover_key ~= recover_key or settings.recover_key_id ~= k.keyId then
+      settings.recover_key, settings.recover_key_id = recover_key, k.keyId
+      save()
+    end
+  end
+end
+
+-- A new pairing or //vt unpair: the key file and the recovery key go.
+local function delete_keys()
+  local s = app.e2e
+  s.keys, s.kx, s.sent = nil, nil, {}
+  os.remove(KEY_FILE)
+  os.remove(KEY_FILE .. '.tmp')
+  settings.recover_key, settings.recover_key_id = '', ''
+  save()
 end
 
 -- ls1 and ls2 frames name the shell the game said is in that slot, or null
@@ -879,7 +1044,11 @@ local function paired(body)
   end
   settings.token = reply.addonToken
   settings.account_id = reply.accountId
+  if settings.e2e_account ~= reply.accountId then settings.e2e_account = '' end
   save()
+  -- Only now, with the new token saved: a mistyped or expired code never
+  -- leaves a working pairing without its keys.
+  delete_keys()
   log('paired (account ' .. reply.accountId .. ')')
   drop_client(1000, 're-paired')
   start()
@@ -1020,7 +1189,8 @@ function commands.unpair()
   cancel_pairing()
   settings.token = ''
   settings.account_id = ''
-  save()
+  settings.e2e_account = ''
+  delete_keys()
   drop_client(1000, 'unpaired')
   app.queue = {}
   app.queue_full = false
@@ -1047,6 +1217,7 @@ windower.register_event('load', function()
   pcall(console, 'VanaTell ' .. _addon.version .. ' loaded')
   updater:on_load()
   read_queue()
+  load_keys()
   start()
 end)
 
