@@ -16,9 +16,13 @@
 #   6. checks from outside: https://vanatell.com/addon/latest.json is this
 #      manifest, every file it names is served with that hash and size, and
 #      /download/addon and /download/ashita lead to this release's zips.
-#   7. announces the release in the VanaTell Discord's #announcements: this version's CHANGELOG
-#      section, how to update and the download links, through the webhook in
-#      VANATELL_DISCORD_ANNOUNCE_WEBHOOK.
+#   7. announces the release in the VanaTell Discord's #announcements: the lines in
+#      tools/announce.md (never the CHANGELOG), how to update and the download links,
+#      through the webhook in VANATELL_DISCORD_ANNOUNCE_WEBHOOK.
+# tools/announce.md at the tag is checked before anything is published: its first line
+# is this version, then 1 to 4 lines starting "- ", each at most 140 characters. Each line
+# names what was added or changed and where it appears, plainly: no description of how
+# anything looks, no teasers, checked against the code.
 # The tag must be pushed first. Commit and push the site's cache key change
 # afterwards.
 #
@@ -75,6 +79,16 @@ git rev-parse -q --verify "refs/tags/$TAG" >/dev/null || die "no tag $TAG in $RE
 git show "$TAG:vanatell.lua" | grep -x "_addon.version = '$VERSION'" >/dev/null || die "vanatell.lua at $TAG is not version $VERSION"
 git show "$TAG:ashita/vanatell.lua" | grep -x "addon.version = '$VERSION'" >/dev/null || die "ashita/vanatell.lua at $TAG is not version $VERSION"
 git show "$TAG:CHANGELOG.md" | grep "^## \[$VERSION\] - " >/dev/null || die "CHANGELOG.md at $TAG has no [$VERSION] section"
+ANNOUNCE_CHECK='
+import sys
+version, lines = sys.argv[1], sys.stdin.read().strip().splitlines()
+if not lines or lines[0].strip() != version:
+    sys.exit("tools/announce.md must start with the line " + version)
+items = [l for l in lines[1:] if l.strip()]
+if not 1 <= len(items) <= 4 or any(not l.startswith("- ") or len(l) > 142 for l in items):
+    sys.exit("tools/announce.md needs 1 to 4 lines starting \"- \", each at most 140 characters")
+'
+git show "$TAG:tools/announce.md" 2>/dev/null | python3 -I -c "$ANNOUNCE_CHECK" "$VERSION" || die "no announcement for $VERSION in tools/announce.md at $TAG; nothing was published"
 
 if [ -n "$LOCAL" ]; then
   mkdir -p "$LOCAL"
@@ -255,16 +269,14 @@ for path, zip_name in (('/download/addon', 'vanatell-%s.zip' % tag), ('/download
 print('release: verified latest.json (%s), %d files by SHA-256 and size, and both download links' % (want['version'], n))
 PY
 
-# 7. The announcement in the Discord's #announcements (embeds off; the links are plain).
-python3 -I - "$VERSION" "$NOTES" <<'PY'
-import json, os, re, sys, urllib.request
-version, notes = sys.argv[1], open(sys.argv[2]).read()
-bullets, current = [], None
-for line in notes.splitlines():
-    if re.match(r'^- ', line):
-        current = line[2:].strip(); bullets.append(current)
-    elif line.startswith('  ') and bullets and line.strip():
-        bullets[-1] += ' ' + line.strip()
+# 7. The announcement in the Discord's #announcements (embeds off; the links are plain): the
+#    lines of tools/announce.md at the tag, checked above; never the CHANGELOG.
+ANNOUNCE="$WORK/announce.md"
+git show "$TAG:tools/announce.md" > "$ANNOUNCE"
+python3 -I - "$VERSION" "$ANNOUNCE" <<'PY'
+import json, os, sys, urllib.request
+version, lines = sys.argv[1], open(sys.argv[2]).read().strip().splitlines()
+bullets = [l[2:].strip() for l in lines[1:] if l.startswith('- ')]
 body = '\n'.join('• ' + b for b in bullets)
 text = ('## VanaTell update\n**Addon %s** for Windower and Ashita\n%s\n'
         'Type `//vt update` in game (on Ashita, `/vt update`). New to it? Download it for Windower '
