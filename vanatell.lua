@@ -32,6 +32,7 @@ local STABLE_AFTER = 10    -- a connection open this long resets the backoff
 local QUIET_DROP = 10      -- seconds a lost connection may take to come back before the game log says so
 local PING_INTERVAL = 30   -- seconds between keepalive pings
 local IDLE_TIMEOUT = 90    -- silence from the relay this long means the link is dead
+local AUTO_UPDATE_GAP = 600 -- seconds between two updates started by the relay's refusal (close 4004)
 local MAX_FRAMES = 20      -- frames decoded per prerender
 
 local QUEUE_MAX = 500         -- chat frames held while disconnected
@@ -95,6 +96,10 @@ local app = {
   outage_since = nil,  -- when the outage began
   outage_said = false, -- the connection lost line was logged for this outage
   announced = false,   -- connected to relay was logged since the last deliberate start
+  refused_reason = nil, -- why the relay last refused this version (close 4004), until a hello
+  auto_update_at = nil, -- when the relay's refusal last started an update
+  forced_said = false, -- the refusal's updating line was logged since load
+  no_newer_said = false, -- the refusal's no newer version line was logged since load
   upgraded = false,    -- the live client's socket has upgraded; it counts as open once the relay says hello
   opened_at = nil, last_rx = nil, last_ping = nil,
   ls = {               -- linkshell detection
@@ -709,6 +714,7 @@ local function on_hello(client)
   end
   app.announced = true
   app.outage, app.outage_since, app.outage_said = false, nil, false
+  app.refused_reason = nil
   local ls = app.ls
   ls.sent, ls.sent_at, ls.pending = nil, nil, nil
   -- While a read is settling, the new socket gets the last settled one, if the game had said its slots.
@@ -734,9 +740,35 @@ end
 local function on_error()
 end
 
+-- The relay's refusal found no newer version on vanatell.com.
+local function no_newer()
+  if app.no_newer_said then return end
+  app.no_newer_said = true
+  log("encryption is on for this account and this version can't encrypt; no newer version is published yet")
+end
+
+-- Close code 4004: the relay refuses this version, as the account has
+-- encryption on. It reconnects with backoff as for any close, quietly (the
+-- outage counts as said, so no connection lost line), and updates itself
+-- from vanatell.com as //vt update does, at most once in AUTO_UPDATE_GAP.
+local function refused(reason)
+  app.refused_reason = reason
+  schedule_retry(reason)
+  app.outage_said = true
+  local t = now()
+  if app.auto_update_at and t - app.auto_update_at < AUTO_UPDATE_GAP then return end
+  app.auto_update_at = t
+  if not app.forced_said then
+    app.forced_said = true
+    log('encryption is on for this account; updating to the newest version')
+  end
+  updater:run_update{auto = true, on_none = no_newer}
+end
+
 -- 401/403 on the upgrade, or close code 4000 (account deleted) or 4001
 -- (token revoked): the token is no good, so stop until the owner pairs again.
--- Anything else reconnects with backoff.
+-- Close code 4004 updates the addon (refused). Anything else reconnects with
+-- backoff.
 local function on_close(client, code, reason)
   if client ~= app.client then return end
   app.client, app.upgraded = nil, false
@@ -748,6 +780,7 @@ local function on_close(client, code, reason)
     return
   end
   if not is_set(reason) then reason = 'code ' .. tostring(code) end
+  if code == 4004 then return refused(reason) end
   schedule_retry(reason)
 end
 

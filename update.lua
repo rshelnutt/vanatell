@@ -7,10 +7,12 @@ in this folder for what you may and may not do with it.
 -- VanaTell's own updates, from vanatell.com.
 -- On load the addon asks once for addon/latest.json and, when it names a
 -- newer version, says so. Nothing is downloaded or written unless the player
--- types //vt update: that asks again and, when the version is newer,
--- downloads the files that differ from the ones here, checks each one's size
--- and SHA-256, backs up the files it replaces into backup/, puts the new ones
--- in place and reloads the addon. //vt rollback puts the backed-up files back
+-- types //vt update, or the relay requires an update (it refuses this
+-- version, with close code 4004, once the account has encryption on; the
+-- connection then runs the same update, at most once in 10 minutes): that
+-- asks again and, when the version is newer, downloads the files that differ
+-- from the ones here, checks each one's size and SHA-256, backs up the files
+-- it replaces into backup/, puts the new ones in place and reloads the addon. //vt rollback puts the backed-up files back
 -- and reloads. Nothing is written until every download has passed its check,
 -- and a failure leaves the files as they were. Only files the manifest names
 -- are written, only inside the addon folder, and never data/ (the settings)
@@ -485,21 +487,34 @@ function U:fail(job, why)
   self:say('VanaTell: update failed: ' .. tostring(why) .. '; still on ' .. tostring(self.version))
 end
 
--- //vt update
-function U:run_update()
-  if self.reloading then return self.log('reloading...') end
-  if self.job and self.job.kind == 'update' then return self.log('an update is already in progress') end
-  if not self.url then return self.log('updates are off in this build') end
+-- //vt update, with opts nil. The update the connection starts when the
+-- relay requires one: opts = {auto = true, on_none = fn(), before_reload =
+-- fn()}. It says nothing when it cannot start (an update running, reloading,
+-- updates off) and skips checking for updates..., as the connection has said
+-- why it runs; on_none replaces already up to date, and before_reload runs
+-- once the new files are in place, just before the reload. Its other lines
+-- are those of //vt update.
+function U:run_update(opts)
+  opts = opts or {}
+  local auto = opts.auto
+  local function cannot(line) if not auto then self.log(line) end end
+  if self.reloading then return cannot('reloading...') end
+  if self.job and self.job.kind == 'update' then return cannot('an update is already in progress') end
+  if not self.url then return cannot('updates are off in this build') end
   self:cancel()
   self.due = false -- this asks anyway
-  local job = {kind = 'update', need = {}, index = 1, downloaded = {}}
+  local job = {kind = 'update', need = {}, index = 1, downloaded = {}, before_reload = opts.before_reload}
   self.job = job
-  self.log('checking for updates...')
+  if not auto then self.log('checking for updates...') end
   local ok, err = self:get(self.url, MAX_MANIFEST, MANIFEST_TIMEOUT, function(status, body)
     local m, why = self:manifest(status, body)
     if not m then return self:fail(job, why) end
     if not update.newer(m.version, self.version) then
       self.job = nil
+      if auto then
+        if opts.on_none then opts.on_none() end
+        return
+      end
       return self.log('already up to date (' .. tostring(self.version) .. ')')
     end
     job.manifest = m
@@ -668,9 +683,12 @@ function U:put_files(files, old)
   return true
 end
 
-function U:reload(notice)
+-- before: run last, just before the reload; an error in it does not stop
+-- the reload.
+function U:reload(notice, before)
   write_file(self.dir .. NOTICE, notice .. '\n')
   self.reloading = true
+  if before then pcall(before) end
   self.reload_addon()
 end
 
@@ -684,7 +702,7 @@ function U:install(job)
   if not ok then return self:fail(job, err) end
   self.job = nil
   self.log('installing ' .. version .. ', reloading')
-  self:reload('updated ' .. version)
+  self:reload('updated ' .. version, job.before_reload)
 end
 
 -- //vt rollback: the files the last update replaced get their backed-up
