@@ -66,6 +66,9 @@ local LS_LOOKUP = {'input /lsmes', 'input /ls2mes'}
 
 local PING = '{"type":"ping"}'
 local CA_FILE = windower.addon_path .. 'relay-roots.txt'
+-- The folder of the settings: data/ on Windower, config/addons/vanatell/ on Ashita.
+local DATA_DIR = rawget(windower, 'data_dir') or (windower.addon_path .. 'data/')
+local QUEUE_FILE = DATA_DIR .. 'queue.json' -- the queue, only across the reload of an update the relay required
 -- What the newest version is and which files it holds (update.lua).
 local UPDATE_URL = 'https://vanatell.com/addon/latest.json'
 
@@ -270,6 +273,43 @@ local function deliver(frame)
     end
     app.queue[#app.queue + 1] = frame
   end
+end
+
+-- Just before the reload of an update the relay required (close 4004), the
+-- queue goes to queue.json, through queue.json.tmp and a rename; the next
+-- load reads it back and deletes it at once (read_queue). This is the only
+-- time chat is written to disk.
+local function write_queue()
+  if #app.queue == 0 then return end
+  if not windower.dir_exists(DATA_DIR) then pcall(windower.create_dir, DATA_DIR) end
+  local frames = {}
+  for i, frame in ipairs(app.queue) do frames[i] = json.encode(frame) end
+  local tmp = QUEUE_FILE .. '.tmp'
+  local f = io.open(tmp, 'wb')
+  if not f then return end
+  local ok = f:write('{"v":1,"frames":[' .. table.concat(frames, ',') .. ']}')
+  f:close()
+  os.remove(QUEUE_FILE) -- Windows will not rename onto an existing file
+  if not (ok and os.rename(tmp, QUEUE_FILE)) then os.remove(tmp) end
+end
+
+-- On load: the queue an update's reload left in queue.json, deleted at once.
+-- At most QUEUE_MAX frames (the newest), and only chat frames; a damaged file
+-- counts as none. They go out, as stored, once the relay says hello.
+local function read_queue()
+  os.remove(QUEUE_FILE .. '.tmp')
+  local f = io.open(QUEUE_FILE, 'rb')
+  if not f then return end
+  local text = f:read('*a')
+  f:close()
+  os.remove(QUEUE_FILE)
+  local ok, saved = pcall(json.decode, text or '')
+  if not (ok and type(saved) == 'table' and saved.v == 1 and type(saved.frames) == 'table') then return end
+  local frames = {}
+  for _, frame in ipairs(saved.frames) do
+    if type(frame) == 'string' and frame:find('^{"type":"chat",') then frames[#frames + 1] = frame end
+  end
+  for i = math.max(1, #frames - QUEUE_MAX + 1), #frames do app.queue[#app.queue + 1] = frames[i] end
 end
 
 local confirm_lone -- set with the linkshell lookup, below
@@ -762,7 +802,7 @@ local function refused(reason)
     app.forced_said = true
     log('encryption is on for this account; updating to the newest version')
   end
-  updater:run_update{auto = true, on_none = no_newer}
+  updater:run_update{auto = true, on_none = no_newer, before_reload = write_queue}
 end
 
 -- 401/403 on the upgrade, or close code 4000 (account deleted) or 4001
@@ -1005,6 +1045,7 @@ commands.help = show_help
 windower.register_event('load', function()
   pcall(console, 'VanaTell ' .. _addon.version .. ' loaded')
   updater:on_load()
+  read_queue()
   start()
 end)
 

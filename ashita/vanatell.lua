@@ -17,7 +17,8 @@ in this folder for what you may and may not do with it.
 --   game data  the player from party and player memory, the bags from
 --              inventory memory, linkshell names and colours from item data
 --   settings   one file for this install: config/addons/vanatell/settings.json
---              under the Ashita folder, so every character shares one pairing
+--              under the Ashita folder, so every character shares one pairing;
+--              queue.json, across an update's reload, sits beside it
 --   TLS        Ashita ships LuaSec as socket.ssl; the addon asks for ssl
 --   files      ashita.fs for the folders an update writes (backup/, assets/)
 -- Everything else (the relay connection, pairing, chat, the offline queue,
@@ -351,6 +352,7 @@ windower = {
   platform = 'ashita',
   dir_exists = function(path) return ashita.fs.exists(path) end,
   create_dir = function(path) return (ashita.fs.create_directory or ashita.fs.create_dir)(path) end,
+  data_dir = SETTINGS_DIR, -- queue.json beside settings.json, never in the addon folder
 }
 _addon = {}
 
