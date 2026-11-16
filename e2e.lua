@@ -541,4 +541,209 @@ function e2e.x25519_base(scalar)
 end
 e2e.BASE = BASE
 
+---------------------------------------------------------------------------
+-- The key schedule: what both sides derive from one exchange.
+---------------------------------------------------------------------------
+local LABEL = {
+  commit = 'VanaTell e2e v1 commit', transcript = 'VanaTell e2e v1 transcript', keys = 'VanaTell e2e v1 keys',
+  key_id = 'VanaTell e2e v1 key id', code = 'VanaTell e2e v1 safety code', confirm = 'VanaTell e2e v1 confirm',
+  done = 'VanaTell e2e v1 done', phone = 'VanaTell e2e v1 recover phone', addon = 'VanaTell e2e v1 recover addon',
+  line = 'VanaTell e2e v1 line', send = 'VanaTell e2e v1 send',
+}
+local KEY_NAMES = {'lineKey', 'lineNonce', 'sendKey', 'sendNonce', 'confirmKey', 'storeKey', 'storeNonce', 'recoverKey'}
+
+-- One byte holding the byte length of s (at most 255), then s.
+function e2e.lp(s)
+  assert(#s <= 255, 'lp: more than 255 bytes')
+  return char(#s) .. s
+end
+local lp = e2e.lp
+
+-- h = SHA-256(lp("VanaTell e2e v1 commit") || lp(kxId) || B): the phone's
+-- commitment to its key, checked against B when the phone reveals it.
+function e2e.commit_hash(kx_id, B)
+  return digest(lp(LABEL.commit) .. lp(kx_id) .. B)
+end
+
+-- th, the transcript hash every key and code of the exchange comes from.
+function e2e.transcript(account_id, kx_id, A, B)
+  return digest(lp(LABEL.transcript) .. lp(account_id) .. lp(kx_id) .. A .. B)
+end
+
+-- The eight 32-byte keys, from the shared secret and the transcript.
+function e2e.derive(shared, th)
+  local okm, keys = e2e.hkdf(th, shared, LABEL.keys, 256), {}
+  for i, name in ipairs(KEY_NAMES) do keys[name] = okm:sub(32 * i - 31, 32 * i) end
+  return keys
+end
+
+local function to_hex(s)
+  return (s:gsub('.', function(c) return string.format('%02x', byte(c)) end))
+end
+
+-- The key set's id: 16 lowercase hex characters.
+function e2e.key_id(th)
+  return to_hex(digest(lp(LABEL.key_id) .. th):sub(1, 8))
+end
+
+-- n (below 10^12) as 12 digits in three groups: '4821 0937 5512'.
+function e2e.format_code(n)
+  local digits = string.format('%012.0f', n % 1e12)
+  return digits:sub(1, 4) .. ' ' .. digits:sub(5, 8) .. ' ' .. digits:sub(9, 12)
+end
+
+-- The safety code: the first 48 bits of a hash of the transcript, mod 10^12.
+function e2e.safety_code(th)
+  local n = 0
+  for _, b in ipairs({byte(digest(lp(LABEL.code) .. th), 1, 6)}) do n = n * 256 + b end
+  return e2e.format_code(n % 1e12)
+end
+
+local function mac16(key, label, th)
+  return hmac(key, lp(label) .. th):sub(1, 16)
+end
+
+-- The addon's proof of the keys (confirm), and the phone's (done).
+function e2e.confirm_mac(ck, th) return mac16(ck, LABEL.confirm, th) end
+function e2e.done_mac(ck, th) return mac16(ck, LABEL.done, th) end
+
+-- On a recovery, each side's proof that it holds rk, the recovery key of the
+-- key set being replaced: side is 'phone' or 'addon'.
+function e2e.recover_mac(rk, side, th) return mac16(rk, LABEL[side], th) end
+
+---------------------------------------------------------------------------
+-- Sealing a line, opening a phone send.
+---------------------------------------------------------------------------
+local KINDS = {tell = 'tell', party = 'party', ls = 'ls', ls1 = 'ls', ls2 = 'ls'}
+local MAX_PAYLOAD = 1216        -- a line's or a send's padded payload, at most
+local MAX_STORED_PAYLOAD = 1600 -- a stored copy's (the phone's; checked by shape only here)
+
+-- tell, party, or ls for either linkshell slot: a slot move never breaks a line.
+function e2e.kind(channel)
+  return KINDS[channel]
+end
+
+-- ASCII A-Z to a-z, nothing else; a missing name is ''.
+function e2e.lower(name)
+  if type(name) ~= 'string' then return '' end
+  return (name:gsub('[A-Z]', function(c) return char(byte(c) + 32) end))
+end
+local lower = e2e.lower
+
+-- What a line binds: its key id, kind, direction, sender and target.
+function e2e.line_ad(key_id, kind, direction, sender, target)
+  return lp(LABEL.line) .. lp(key_id) .. lp(kind) .. lp(direction) .. lp(lower(sender)) .. lp(lower(target))
+end
+
+-- What a phone send binds: its key id, client id, kind and target.
+function e2e.send_ad(key_id, client_id, kind, target)
+  return lp(LABEL.send) .. lp(key_id) .. lp(client_id) .. lp(kind) .. lp(lower(target))
+end
+
+-- A JSON string: only '"' and '\' are escaped, and any control character
+-- as \u00xx; '/' and non-ASCII are written as they are.
+local function json_string(s)
+  return '"' .. s:gsub('[%c"\\]', function(c)
+    if c == '"' then return '\\"' elseif c == '\\' then return '\\\\' end
+    local b = byte(c)
+    if b < 32 then return string.format('\\u%04x', b) end
+    return c
+  end) .. '"'
+end
+
+-- {{key, value}, ...} as a JSON object in that order, with no spaces;
+-- numbers are whole numbers.
+function e2e.payload_json(fields)
+  local parts = {}
+  for i, f in ipairs(fields) do
+    local v = f[2]
+    parts[i] = json_string(f[1]) .. ':' .. (type(v) == 'number' and string.format('%.0f', v) or json_string(v))
+  end
+  return '{' .. concat(parts, ',') .. '}'
+end
+
+-- Spaces up to the next multiple of 32 bytes.
+local function pad32(s)
+  return s .. (' '):rep((32 - #s % 32) % 32)
+end
+
+-- A line's padded payload, {"t","ts","seq"}. A text too long for it is cut,
+-- a character (a UTF-8 sequence) at a time from the end, until it fits.
+function e2e.line_payload(text, ts, seq)
+  local function make(t) return e2e.payload_json{{'t', t}, {'ts', ts}, {'seq', seq}} end
+  local whole = make(text)
+  if #whole <= MAX_PAYLOAD then return pad32(whole) end
+  local budget, used, cut = MAX_PAYLOAD - #make(''), 0, 0
+  for ch in text:gmatch('[%z\1-\127\192-\255][\128-\191]*') do
+    local n = #json_string(ch) - 2
+    if used + n > budget then break end
+    used, cut = used + n, cut + #ch
+  end
+  return pad32(make(text:sub(1, cut)))
+end
+
+-- nonce = the first 12 bytes of HMAC-SHA256(nonce_key, ad || payload), so
+-- per-line sealing needs no randomness; then ChaCha20-Poly1305.
+-- -> nonce, sealed
+function e2e.seal_payload(key, nonce_key, ad, payload)
+  local nonce = hmac(nonce_key, ad .. payload):sub(1, 12)
+  return nonce, e2e.seal(key, nonce, payload, ad)
+end
+
+-- keys: {lineKey =, lineNonce =} (raw bytes); meta: {key_id, kind, direction,
+-- sender, target}. -> the envelope as JSON text.
+function e2e.seal_line(keys, meta, text, ts, seq)
+  local ad = e2e.line_ad(meta.key_id, meta.kind, meta.direction, meta.sender, meta.target)
+  local nonce, sealed = e2e.seal_payload(keys.lineKey, keys.lineNonce, ad, e2e.line_payload(text, ts, seq))
+  return '{"v":1,"k":"' .. meta.key_id .. '","n":"' .. e2e.b64url(nonce) .. '","c":"' .. e2e.b64url(sealed) .. '"}'
+end
+
+-- True when t is an envelope of the right shape: v 1, r 1 exactly when it is
+-- a stored copy, a key id, a 12-byte nonce, and a ciphertext of 48 bytes or
+-- more whose length less the tag is a multiple of 32.
+function e2e.parse_envelope(t, stored)
+  if type(t) ~= 'table' or t.v ~= 1 then return false end
+  if stored then
+    if t.r ~= 1 then return false end
+  elseif t.r ~= nil then
+    return false
+  end
+  if type(t.k) ~= 'string' or not t.k:find('^[0-9a-f]+$') or #t.k ~= 16 then return false end
+  if type(t.n) ~= 'string' or #t.n ~= 16 or not e2e.unb64url(t.n) then return false end
+  local c = type(t.c) == 'string' and e2e.unb64url(t.c)
+  if not c then return false end
+  local max = (stored and MAX_STORED_PAYLOAD or MAX_PAYLOAD) + 16
+  return #c >= 48 and #c <= max and (#c - 16) % 32 == 0
+end
+
+local json
+local function decode(text)
+  json = json or dofile(here .. 'json.lua')
+  local ok, v = pcall(json.decode, text)
+  if ok then return v end
+  return nil
+end
+
+local function whole_number(v)
+  return type(v) == 'number' and v == v and v % 1 == 0 and v > -2 ^ 53 and v < 2 ^ 53
+end
+
+-- A phone's sealed send frame, opened with keys {keyId =, sendKey =}:
+-- -> {t =, to =, ts =} | nil, 'could not decrypt' (never a guess).
+function e2e.open_send(keys, frame)
+  local env = frame.e2e
+  local kind, client_id = e2e.kind(frame.channel), frame.clientId
+  if not (e2e.parse_envelope(env, false) and env.k == keys.keyId and kind and type(client_id) == 'string'
+          and #client_id <= 255 and (frame.target == nil or type(frame.target) == 'string')) then
+    return nil, 'could not decrypt'
+  end
+  local ad = e2e.send_ad(keys.keyId, client_id, kind, frame.target)
+  local payload = e2e.open(keys.sendKey, e2e.unb64url(env.n), e2e.unb64url(env.c), ad)
+  local p = payload and decode(payload)
+  if not (type(p) == 'table' and type(p.t) == 'string' and type(p.to) == 'string' and whole_number(p.ts)) then
+    return nil, 'could not decrypt'
+  end
+  return {t = p.t, to = p.to, ts = p.ts}
+end
+
 return e2e
