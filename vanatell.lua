@@ -858,49 +858,138 @@ local function slot_name(state, channel)
   return shell and shell.name or nil
 end
 
--- A send frame runs at most one game command per id and is always acked;
--- the relay may replay an id after a reconnect.
--- A linkshell send is for a linkshell, not a slot: the one the relay names
--- (frame.linkshell), else the one this addon last told the relay is in the
--- frame's slot. While the game has not said which shell is in which slot, the
--- send waits for a lookup, and fails if the game still has not said: it is
--- never typed in a slot that is a guess. It is typed in the slot the game
--- said that linkshell is in, and the ack names that slot when it is not the
--- frame's; a linkshell in neither slot fails the send. want: the linkshell,
--- worked out when the frame first arrived (false: not known). looked: a
--- lookup ran for this send already.
-local function handle_send(client, frame, want, looked)
+local REPLAY_WINDOW = 12 * 3600 * 1000 -- ms: a send this far from the PC's clock is too old, and a typed send's record lasts this long
+
+local function now_ms()
+  return math.floor(now() * 1000)
+end
+
+-- Drops replay records 12 hours past the later of typed time and send time.
+local function prune_sent(t)
+  local kept = {}
+  for _, r in ipairs(app.e2e.sent) do
+    if t <= math.max(r.typedAt, r.ts) + REPLAY_WINDOW then kept[#kept + 1] = r end
+  end
+  local changed = #kept ~= #app.e2e.sent
+  app.e2e.sent = kept
+  return changed
+end
+
+local function sent_record(field, value)
+  for _, r in ipairs(app.e2e.sent) do
+    if r[field] == value then return r end
+  end
+  return nil
+end
+
+-- A send runs at most one game command per id and is always acked; the
+-- relay may replay an id after a reconnect. send = {frame =, text =, want =,
+-- opened =}: the frame, the text to type (the opened payload's, or the
+-- frame's plaintext), and for a sealed send its payload and destination.
+-- A linkshell send is for a linkshell, not a slot: the one a sealed send's
+-- payload names (ls:<Name>), else the one the relay names (frame.linkshell),
+-- else the one this addon last told the relay is in the frame's slot; a
+-- send to a slot (slot:N, or one that names none) is for that slot. While
+-- the game has not said which shell is in which slot, the send waits for a
+-- lookup, and fails if the game still has not said: it is never typed in a
+-- slot that is a guess. It is typed in the slot the game said that linkshell
+-- is in, and the ack names that slot when it is not the frame's; a
+-- linkshell in neither slot fails the send. want: the linkshell (false: the
+-- frame's slot), worked out when the frame first arrived. looked: a lookup
+-- ran for this send already.
+local function type_send(client, send, looked)
+  local frame = send.frame
   local id = frame.id
-  if not is_send_id(id) then return end
   if app.executed[id] then return ack(client, id, true) end
   if not windower.ffxi.get_player() then return ack(client, id, false, 'not logged in') end
   local channel = frame.channel
-  local command, text = chat.validate_send(channel, frame.target, frame.text)
+  local command, text = chat.validate_send(channel, frame.target, send.text)
   if not command then return ack(client, id, false, text) end
   if channel == 'ls1' or channel == 'ls2' then
     local ls = app.ls
-    if want == nil then want = is_set(frame.linkshell) and frame.linkshell or slot_name(ls.sent, channel) or false end
+    if send.want == nil then send.want = is_set(frame.linkshell) and frame.linkshell or slot_name(ls.sent, channel) or false end
+    local want = send.want
     -- A send that names no linkshell is for the slot it gives.
     if want then
       if ls.lookup or (not ls.known and not looked and lookup_for_send()) then
-        ls.held_sends[#ls.held_sends + 1] = {frame = frame, want = want}
+        ls.held_sends[#ls.held_sends + 1] = send
         return
       end
       if not ls.known then return ack(client, id, false, 'linkshell slot not known') end
       if slot_name(ls.current, channel) ~= want then
         channel = OTHER_SLOT[channel]
         if slot_name(ls.current, channel) ~= want then return ack(client, id, false, 'linkshell not equipped') end
-        command, text = chat.validate_send(channel, frame.target, frame.text)
+        command, text = chat.validate_send(channel, frame.target, send.text)
       end
     end
   end
   windower.send_command(command)
   remember_executed(id)
+  if send.opened then
+    local t = now_ms()
+    prune_sent(t)
+    app.e2e.sent[#app.e2e.sent + 1] = {clientId = frame.clientId, id = id, typedAt = t, ts = send.opened.ts}
+    write_keyfile()
+  end
   local t = now()
   local echoes = live_echoes(t)
   echoes[#echoes + 1] = {channel = channel, target = channel == 'tell' and frame.target:lower() or nil,
                          text = text, expires = t + ECHO_WINDOW}
   ack(client, id, true, nil, channel ~= frame.channel and channel or nil)
+end
+
+-- A sealed send's destination against its frame: '' for a tell or party;
+-- ls:<Name> or slot:1 or slot:2 for a linkshell. -> the linkshell wanted
+-- (false: the frame's slot) | nil, the error.
+local function destination(frame, to)
+  local kind = e2e.kind(frame.channel)
+  if kind ~= 'ls' then
+    if to ~= '' then return nil, 'bad destination' end
+    return false
+  end
+  local name = to:match('^ls:(.+)$')
+  if name then
+    if is_set(frame.linkshell) and frame.linkshell ~= name then return nil, 'linkshell mismatch' end
+    return name
+  end
+  local slot = to:match('^slot:([12])$')
+  if not slot then return nil, 'bad destination' end
+  if frame.channel ~= 'ls' .. slot then return nil, 'linkshell mismatch' end
+  return false
+end
+
+-- A send frame as it arrives, before it may wait for a linkshell lookup:
+-- with keys, it must be sealed under them, for the destination the frame
+-- has, not typed before and not more than 12 hours from this PC's clock;
+-- without keys, it must be plaintext. The decision stands for a send held
+-- for a lookup, whatever happens to the keys meanwhile.
+local function handle_send(client, frame)
+  local id = frame.id
+  if not is_send_id(id) then return end
+  if app.executed[id] or sent_record('id', id) then return ack(client, id, true) end
+  local keys = app.e2e.keys
+  local send = {frame = frame, text = frame.text}
+  if keys then
+    if frame.e2e == nil then return ack(client, id, false, 'not encrypted') end
+    local opened, err = e2e.open_send(keys, frame)
+    if not opened then return ack(client, id, false, err) end
+    local want
+    want, err = destination(frame, opened.to)
+    if want == nil then return ack(client, id, false, err) end
+    local t = now_ms()
+    if prune_sent(t) then write_keyfile() end
+    if sent_record('clientId', frame.clientId) then return ack(client, id, false, 'already sent') end
+    if math.abs(opened.ts - t) > REPLAY_WINDOW then return ack(client, id, false, 'too old') end
+    -- A send the phone sealed under these keys: it holds them, as done would say.
+    if not keys.acked then
+      keys.acked = true
+      write_keyfile()
+    end
+    send.text, send.want, send.opened = opened.t, want, opened
+  elseif frame.e2e ~= nil then
+    return ack(client, id, false, 'could not decrypt')
+  end
+  type_send(client, send)
 end
 
 ---------------------------------------------------------------------------
@@ -1068,7 +1157,7 @@ local function release_sends()
   local sends = ls.held_sends
   ls.held_sends = {}
   if app.state == 'open' and app.client then
-    for _, send in ipairs(sends) do handle_send(app.client, send.frame, send.want, true) end
+    for _, send in ipairs(sends) do type_send(app.client, send, true) end
   end
 end
 
