@@ -95,6 +95,7 @@ local app = {
   outage_since = nil,  -- when the outage began
   outage_said = false, -- the connection lost line was logged for this outage
   announced = false,   -- connected to relay was logged since the last deliberate start
+  upgraded = false,    -- the live client's socket has upgraded; it counts as open once the relay says hello
   opened_at = nil, last_rx = nil, last_ping = nil,
   ls = {               -- linkshell detection
     equips = {},       -- 'bag:slot' -> 1 or 2, from 0x0E0 packets, /lsmes replies and the saved settings
@@ -675,14 +676,26 @@ end
 local function drop_client(code, reason)
   local client = app.client
   if not client then return end
-  app.client = nil
+  app.client, app.upgraded = nil, false
   client:close(code, reason)
   client:abort()
 end
 
--- The held chat goes out first, in order, then the linkshells.
+-- The socket upgraded. It counts as open only once the relay says hello
+-- (on_hello); a relay that refuses this version closes it without one. The
+-- idle clock starts here, so a socket that never says hello is dropped after
+-- IDLE_TIMEOUT and retried.
 local function on_open(client)
   if client ~= app.client then return end
+  app.upgraded = true
+  app.last_rx = now()
+end
+
+-- The relay said hello: the connection is open. The held chat goes out
+-- first, in order, then the linkshells. A second hello on the same socket
+-- changes nothing.
+local function on_hello(client)
+  if app.state == 'open' then return end
   local queue = app.queue
   app.queue, app.queue_full = {}, false
   for _, frame in ipairs(queue) do client:send_text(frame) end
@@ -709,7 +722,11 @@ local function on_message(client, text)
   local ok, frame = pcall(json.decode, text)
   if not (ok and type(frame) == 'table') then return end
   if hooks.on_frame then hooks.on_frame(frame) end
-  if frame.type == 'send' then handle_send(client, frame) end
+  if frame.type == 'hello' then
+    on_hello(client)
+  elseif frame.type == 'send' then
+    handle_send(client, frame)
+  end
 end
 
 -- ws.lua follows every on_error with an on_close carrying the same text,
@@ -722,7 +739,7 @@ end
 -- Anything else reconnects with backoff.
 local function on_close(client, code, reason)
   if client ~= app.client then return end
-  app.client = nil
+  app.client, app.upgraded = nil, false
   local status = client.http_status
   if status == 401 or status == 403 or code == 4000 or code == 4001 then
     app.state = 'unauthorized'
@@ -744,9 +761,9 @@ local function connect()
     on_error = on_error,
     on_close = on_close,
   }
-  app.client = client
+  app.client, app.upgraded = client, false
   app.state = 'connecting'
-  app.opened_at = nil
+  app.opened_at, app.last_rx = nil, nil
   local ok, err = client:connect()
   if not ok and app.client == client then
     app.client = nil
@@ -962,7 +979,7 @@ windower.register_event('unload', function()
   cancel_pairing()
   updater:on_unload()
   local client = app.client
-  app.client = nil
+  app.client, app.upgraded = nil, false
   if client then client:abort() end
 end)
 
@@ -977,13 +994,14 @@ windower.register_event('prerender', function()
   end
   if app.state == 'waiting' and t >= app.next_attempt then connect() end
   if app.client then app.client:pump(MAX_FRAMES) end
-  if app.state == 'open' then
+  -- From the upgrade on, whether or not the relay has said hello.
+  if app.client and app.last_rx then
     if t - app.last_rx >= IDLE_TIMEOUT then
       local client = app.client
-      app.client = nil
+      app.client, app.upgraded = nil, false
       client:abort()
       schedule_retry('idle timeout')
-    elseif t - app.last_ping >= PING_INTERVAL then
+    elseif app.state == 'open' and t - app.last_ping >= PING_INTERVAL then
       app.client:send_text(PING)
       app.last_ping = t
     end
