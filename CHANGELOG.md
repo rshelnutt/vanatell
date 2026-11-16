@@ -36,6 +36,13 @@ The zips, as the tool builds them:
 
 ## [Unreleased]
 
+## [0.3.8] - 2026-11-16
+
+### Changed
+
+- The game log no longer says the connection was lost when it comes back within 10 seconds. One still down after
+  10 seconds is said once, then reconnected when it is back. Lines you say meanwhile are sent as before.
+
 ## [0.3.7] - 2026-11-15
 
 ### Fixed
@@ -200,7 +207,8 @@ The zips, as the tool builds them:
 - Case-insensitive pair codes: upper or lower case both work, and dashes or
   spaces copied from the phone are ignored.
 
-[Unreleased]: https://github.com/rshelnutt/vanatell/compare/v0.3.7...HEAD
+[Unreleased]: https://github.com/rshelnutt/vanatell/compare/v0.3.8...HEAD
+[0.3.8]: https://github.com/rshelnutt/vanatell/compare/v0.3.7...v0.3.8
 [0.3.7]: https://github.com/rshelnutt/vanatell/compare/v0.3.6...v0.3.7
 [0.3.6]: https://github.com/rshelnutt/vanatell/compare/v0.3.5...v0.3.6
 [0.3.5]: https://github.com/rshelnutt/vanatell/compare/v0.3.4...v0.3.5

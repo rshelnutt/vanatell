@@ -14,7 +14,7 @@ in this folder for what you may and may not do with it.
 -- is pumped from prerender and never blocks.
 _addon.name = 'vanatell'
 _addon.command = 'vt'
-_addon.version = '0.3.7'
+_addon.version = '0.3.8'
 
 local config = require('config')
 
@@ -29,6 +29,7 @@ local now = hooks.now or require('socket').gettime
 local BACKOFF_MIN = 1      -- seconds before the first retry
 local BACKOFF_MAX = 60     -- longest wait between retries
 local STABLE_AFTER = 10    -- a connection open this long resets the backoff
+local QUIET_DROP = 10      -- seconds a lost connection may take to come back before the game log says so
 local PING_INTERVAL = 30   -- seconds between keepalive pings
 local IDLE_TIMEOUT = 90    -- silence from the relay this long means the link is dead
 local MAX_FRAMES = 20      -- frames decoded per prerender
@@ -91,6 +92,9 @@ local app = {
   settings = settings,
   last_error = nil,    -- why the last connection ended
   outage = false,      -- a connection was lost and none has opened since
+  outage_since = nil,  -- when the outage began
+  outage_said = false, -- the connection lost line was logged for this outage
+  announced = false,   -- connected to relay was logged since the last deliberate start
   opened_at = nil, last_rx = nil, last_ping = nil,
   ls = {               -- linkshell detection
     equips = {},       -- 'bag:slot' -> 1 or 2, from 0x0E0 packets, /lsmes replies and the saved settings
@@ -646,8 +650,10 @@ end
 ---------------------------------------------------------------------------
 -- Connection lifecycle.
 ---------------------------------------------------------------------------
--- Starts the wait before the next attempt. The connection lost line is
--- logged once per outage.
+-- Starts the wait before the next attempt. A connection that comes back
+-- within QUIET_DROP seconds says nothing; one still down then gets the
+-- connection lost line, once per outage (prerender), and reconnected once
+-- it opens.
 local function schedule_retry(reason)
   local t = now()
   if app.opened_at and t - app.opened_at >= STABLE_AFTER then app.backoff = BACKOFF_MIN end
@@ -658,8 +664,7 @@ local function schedule_retry(reason)
   app.next_attempt = t + delay
   app.last_error = reason
   if not app.outage then
-    app.outage = true
-    log('connection lost (' .. reason .. '), retrying')
+    app.outage, app.outage_since, app.outage_said = true, t, false
   end
 end
 
@@ -684,8 +689,13 @@ local function on_open(client)
   local t = now()
   app.state = 'open'
   app.last_rx, app.last_ping, app.opened_at = t, t, t
-  log(app.outage and 'reconnected to relay' or 'connected to relay')
-  app.outage = false
+  if app.outage_said then
+    log('reconnected to relay')
+  elseif not app.announced then
+    log('connected to relay')
+  end
+  app.announced = true
+  app.outage, app.outage_since, app.outage_said = false, nil, false
   local ls = app.ls
   ls.sent, ls.sent_at, ls.pending = nil, nil, nil
   -- While a read is settling, the new socket gets the last settled one, if the game had said its slots.
@@ -755,7 +765,7 @@ local function start()
     app.state = 'disabled'
   else
     app.backoff = BACKOFF_MIN
-    app.outage = false
+    app.outage, app.outage_since, app.outage_said, app.announced = false, nil, false, false
     connect()
   end
 end
@@ -960,6 +970,11 @@ windower.register_event('prerender', function()
   if app.pairing then app.pairing:pump() end
   updater:pump()
   local t = now()
+  if app.outage and not app.outage_said and (app.state == 'waiting' or app.state == 'connecting')
+      and t - app.outage_since >= QUIET_DROP then
+    app.outage_said = true
+    log('connection lost (' .. tostring(app.last_error) .. '), retrying')
+  end
   if app.state == 'waiting' and t >= app.next_attempt then connect() end
   if app.client then app.client:pump(MAX_FRAMES) end
   if app.state == 'open' then
