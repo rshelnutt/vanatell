@@ -390,6 +390,7 @@ function update.new(opts)
     job = nil,     -- {kind = 'check' | 'update', ...} while one runs
     due = false,   -- the load check starts on the next pump
     reloading = false,
+    reload_version = nil, -- the version the reload goes into, once reloading
   }, U)
 end
 
@@ -684,11 +685,11 @@ function U:put_files(files, old)
   return true
 end
 
--- before: run last, just before the reload; an error in it does not stop
--- the reload.
-function U:reload(notice, before)
+-- version: the one the reload goes into. before: run last, just before the
+-- reload; an error in it does not stop the reload.
+function U:reload(notice, version, before)
   write_file(self.dir .. NOTICE, notice .. '\n')
-  self.reloading = true
+  self.reloading, self.reload_version = true, version
   if before then pcall(before) end
   self.reload_addon()
 end
@@ -703,7 +704,7 @@ function U:install(job)
   if not ok then return self:fail(job, err) end
   self.job = nil
   self.log('installing ' .. version .. ', reloading')
-  self:reload('updated ' .. version, job.before_reload)
+  self:reload('updated ' .. version, version, job.before_reload)
 end
 
 -- //vt rollback: the files the last update replaced get their backed-up
@@ -730,7 +731,7 @@ function U:rollback()
   self:cancel()
   self.job = nil
   self.log('restoring ' .. rec.version .. ', reloading')
-  self:reload('rolled back ' .. rec.version)
+  self:reload('rolled back ' .. rec.version, rec.version)
 end
 
 return update

@@ -132,7 +132,7 @@ Each time it loads, the addon asks vanatell.com once for the newest version numb
 
 The addon also updates itself when the relay requires it. If the relay refuses this version, the addon says `VanaTell: encryption is on for this account; updating to the newest version` and runs the same update as `//vt update`, with every check it makes, at most once every 10 minutes. Lines said meanwhile are kept and sent once it reconnects. With `//vt off` (`/vt off`) the addon does not connect, so it never updates by itself.
 
-`//vt rollback` (`/vt rollback`) puts back the files the last update replaced and reloads.
+`//vt rollback` (`/vt rollback`) puts back the files the last update replaced and reloads. Lines waiting to be sent are kept across the reload when the version it goes back to is this one or newer.
 
 To update by hand instead, download the zip from [Releases](../../releases) as in Install.
 
@@ -162,7 +162,7 @@ To update by hand instead, download the zip from [Releases](../../releases) as i
 
 - `addons/vanatell/data/settings.xml` holds this PC's pairing token in plain text. Treat it like a password. `//vt unpair` wipes the token.
 - On Ashita that file is `config/addons/vanatell/settings.json` in the Ashita folder, shared by all your characters. Treat it like a password too. `/vt unpair` wipes the token.
-- Lines that arrive while the relay is out of reach wait in memory, up to 500. They are written to disk only for the seconds an update's reload takes, in `addons/vanatell/data/queue.json` (on Ashita, `config/addons/vanatell/queue.json`), then read back and deleted.
+- Lines that arrive while the relay is out of reach wait in memory, up to 500. They are written to disk only for the seconds the reload of an update or a rollback takes, in `addons/vanatell/data/queue.json` (on Ashita, `config/addons/vanatell/queue.json`), then read back and deleted.
 
 Everything travels over an encrypted connection, and the addon checks the relay's certificate, and vanatell.com's for updates, against the small list of trust roots in `relay-roots.txt`. That file is not a certificate to install; it is only read by the addon.
 

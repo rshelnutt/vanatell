@@ -51,8 +51,9 @@ The zips, as the tool builds them:
 - The connection counts as open once the relay answers: only then does the game log say
   `connected to relay` and the lines held meanwhile go out. A connection the relay never
   answers is dropped after 90 seconds and tried again.
-- Lines waiting to be sent are kept across the reload of `//vt update` (on Ashita, `/vt update`)
-  and sent once the addon reconnects. Before, that reload lost them.
+- Lines waiting to be sent are kept across the reload of `//vt update` and `//vt rollback` (on
+  Ashita, `/vt update` and `/vt rollback`) and sent once the addon reconnects. Before, that reload
+  lost them. A rollback to an older version, which cannot read them back, still loses them.
 
 ## [0.3.8] - 2026-11-16
 

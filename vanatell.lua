@@ -68,7 +68,8 @@ local PING = '{"type":"ping"}'
 local CA_FILE = windower.addon_path .. 'relay-roots.txt'
 -- The folder of the settings: data/ on Windower, config/addons/vanatell/ on Ashita.
 local DATA_DIR = rawget(windower, 'data_dir') or (windower.addon_path .. 'data/')
-local QUEUE_FILE = DATA_DIR .. 'queue.json' -- the queue, only across an update's reload
+local QUEUE_FILE = DATA_DIR .. 'queue.json' -- the queue, only across an update's or a rollback's reload
+local QUEUE_SINCE = '0.3.9' -- the first version that reads queue.json back
 -- What the newest version is and which files it holds (update.lua).
 local UPDATE_URL = 'https://vanatell.com/addon/latest.json'
 
@@ -99,11 +100,9 @@ local app = {
   outage_since = nil,  -- when the outage began
   outage_said = false, -- the connection lost line was logged for this outage
   announced = false,   -- connected to relay was logged since the last deliberate start
-  refused_reason = nil, -- why the relay last refused this version (close 4004), until a hello
   auto_update_at = nil, -- when the relay's refusal last started an update
   forced_said = false, -- the refusal's updating line was logged since load
   no_newer_said = false, -- the refusal's no newer version line was logged since load
-  upgraded = false,    -- the live client's socket has upgraded; it counts as open once the relay says hello
   opened_at = nil, last_rx = nil, last_ping = nil,
   ls = {               -- linkshell detection
     equips = {},       -- 'bag:slot' -> 1 or 2, from 0x0E0 packets, /lsmes replies and the saved settings
@@ -276,11 +275,16 @@ local function deliver(frame)
 end
 
 -- Just before an update's reload (//vt update, or the one the relay's
--- refusal starts), the queue goes to queue.json, through queue.json.tmp and
--- a rename; the next load reads it back and deletes it at once (read_queue).
--- This is the only time chat is written to disk.
+-- refusal starts), and again at the unload of any update's or rollback's
+-- reload, the queue goes to queue.json, through queue.json.tmp and a rename;
+-- an empty queue removes it. So the file holds the queue as it is at the
+-- last moment. The next load reads it back and deletes it at once
+-- (read_queue). This is the only time chat is written to disk.
 local function write_queue()
-  if #app.queue == 0 then return end
+  if #app.queue == 0 then
+    os.remove(QUEUE_FILE)
+    return
+  end
   if not windower.dir_exists(DATA_DIR) then pcall(windower.create_dir, DATA_DIR) end
   local frames = {}
   for i, frame in ipairs(app.queue) do frames[i] = json.encode(frame) end
@@ -721,7 +725,7 @@ end
 local function drop_client(code, reason)
   local client = app.client
   if not client then return end
-  app.client, app.upgraded = nil, false
+  app.client = nil
   client:close(code, reason)
   client:abort()
 end
@@ -732,7 +736,6 @@ end
 -- IDLE_TIMEOUT and retried.
 local function on_open(client)
   if client ~= app.client then return end
-  app.upgraded = true
   app.last_rx = now()
 end
 
@@ -754,7 +757,6 @@ local function on_hello(client)
   end
   app.announced = true
   app.outage, app.outage_since, app.outage_said = false, nil, false
-  app.refused_reason = nil
   local ls = app.ls
   ls.sent, ls.sent_at, ls.pending = nil, nil, nil
   -- While a read is settling, the new socket gets the last settled one, if the game had said its slots.
@@ -792,7 +794,6 @@ end
 -- outage counts as said, so no connection lost line), and updates itself
 -- from vanatell.com as //vt update does, at most once in AUTO_UPDATE_GAP.
 local function refused(reason)
-  app.refused_reason = reason
   schedule_retry(reason)
   app.outage_said = true
   local t = now()
@@ -811,7 +812,7 @@ end
 -- backoff.
 local function on_close(client, code, reason)
   if client ~= app.client then return end
-  app.client, app.upgraded = nil, false
+  app.client = nil
   local status = client.http_status
   if status == 401 or status == 403 or code == 4000 or code == 4001 then
     app.state = 'unauthorized'
@@ -834,7 +835,7 @@ local function connect()
     on_error = on_error,
     on_close = on_close,
   }
-  app.client, app.upgraded = client, false
+  app.client = client
   app.state = 'connecting'
   app.opened_at, app.last_rx = nil, nil
   local ok, err = client:connect()
@@ -1049,11 +1050,18 @@ windower.register_event('load', function()
   start()
 end)
 
+-- The reload of an update or a rollback, which Windower (or Ashita) ran
+-- some frames after it was asked for: the queue as it is now goes to
+-- queue.json, unless the version it reloads into is older than QUEUE_SINCE,
+-- which would never read it back.
 windower.register_event('unload', function()
   cancel_pairing()
+  if updater.reloading then
+    if update.newer(QUEUE_SINCE, updater.reload_version) then os.remove(QUEUE_FILE) else write_queue() end
+  end
   updater:on_unload()
   local client = app.client
-  app.client, app.upgraded = nil, false
+  app.client = nil
   if client then client:abort() end
 end)
 
@@ -1072,7 +1080,7 @@ windower.register_event('prerender', function()
   if app.client and app.last_rx then
     if t - app.last_rx >= IDLE_TIMEOUT then
       local client = app.client
-      app.client, app.upgraded = nil, false
+      app.client = nil
       client:abort()
       schedule_retry('idle timeout')
     elseif app.state == 'open' and t - app.last_ping >= PING_INTERVAL then
