@@ -36,6 +36,12 @@ local NOTICE = BACKUP .. 'notice.txt'  -- what the next load says: "updated X.Y.
 -- (Ashita), with LuaBitOp on Lua 5.1 (Windower), and with no bit library.
 local BUDGET_JIT, BUDGET_BIT, BUDGET_PURE = 65536, 8192, 1024
 
+-- The first version with encryption. Once the pairing's account has
+-- switched to encryption, //vt rollback never restores a version older than
+-- this: the relay would refuse it (close 4004), and one from before the
+-- self-update release would then lose every line said.
+update.E2E_SINCE = '0.4.0'
+
 -- SHA-256 is sha256.lua, beside this file; the names below are kept for the
 -- tests that use them.
 local here = debug.getinfo(1, 'S').source:match('^@(.*[/\\])') or ''
@@ -171,7 +177,9 @@ U.__index = U
 -- addon_path (ending in a separator), manifest_url (false: no checks),
 -- cafile, command ('//vt'), log(line) (the chat log, prefixed), chat(text)
 -- (the chat log as it is), console(text), reload(), fs = {dir_exists(path),
--- create_dir(path)}, and for tests sha256 (an implementation) and budget.
+-- create_dir(path)}, switched() (true once the pairing's account has
+-- switched to encryption: rollbacks below E2E_SINCE are refused), and for
+-- tests sha256 (an implementation) and budget.
 function update.new(opts)
   local impl = opts.sha256 or sha256.impl()
   local budget = opts.budget
@@ -182,6 +190,7 @@ function update.new(opts)
     ws = opts.ws, json = opts.json, version = opts.version, platform = opts.platform, dir = opts.addon_path,
     url = opts.manifest_url, cafile = opts.cafile, command = opts.command or '//vt',
     log = opts.log, chat = opts.chat, console = opts.console, reload_addon = opts.reload, fs = opts.fs or {},
+    switched = opts.switched,
     impl = impl, budget = budget,
     req = nil,     -- the request in flight
     job = nil,     -- {kind = 'check' | 'update', ...} while one runs
@@ -506,13 +515,18 @@ end
 
 -- //vt rollback: the files the last update replaced get their backed-up
 -- contents back, the files it added go, then the backup goes and the
--- addon reloads.
+-- addon reloads. Not to a version without encryption once the pairing's
+-- account has switched.
 function U:rollback()
   if self.reloading then return self.log('reloading...') end
   if self.job and self.job.kind == 'update' then return self.log('an update is in progress; try again once it ends') end
   local rec = self:read_record()
   if rec == nil then return self.log('nothing to roll back') end
   if not rec then return self:say('VanaTell: rollback failed: the backup record is damaged') end
+  if self.switched and self.switched() and update.newer(update.E2E_SINCE, rec.version) then
+    return self.log("can't roll back to " .. rec.version .. ': encryption is on, and that version has no encryption. '
+      .. self.command .. ' update installs the newest.')
+  end
   local dir, files, old = self.dir, {}, {}
   for _, path in ipairs(rec.files) do
     local data = read_file(dir .. BACKUP .. path)

@@ -93,7 +93,7 @@ for _, key in ipairs({'ls_slots', 'recover_key', 'recover_key_id', 'e2e_account'
 end
 settings.url = nil
 
--- state: unpaired | disabled | waiting | connecting | open | unauthorized
+-- state: unpaired | disabled | waiting | connecting | open | unauthorized | stopped
 local app = {
   state = 'unpaired',
   client = nil,        -- the live ws client; callbacks from any other are ignored
@@ -124,6 +124,7 @@ local app = {
   },
   auto_update_at = nil, -- when the relay's refusal last started an update
   forced_said = false, -- the refusal's updating line was logged since load
+  no_bit_said = false, -- the refusal's no bit library line was logged since load
   no_newer_said = false, -- the refusal's no newer version line was logged since load
   opened_at = nil, last_rx = nil, last_ping = nil,
   ls = {               -- linkshell detection
@@ -213,6 +214,10 @@ local updater = update.new{
   fs = {dir_exists = windower.dir_exists, create_dir = windower.create_dir},
   sha256 = hooks.sha256,
   budget = hooks.hash_budget,
+  -- Keys held, or the relay said so (e2e_account): no rollback below encryption.
+  switched = function()
+    return app.e2e.keys ~= nil or (is_set(settings.e2e_account) and settings.e2e_account == settings.account_id)
+  end,
 }
 hooks.updater = updater
 
@@ -1339,6 +1344,11 @@ local function on_message(client, text)
   if not (ok and type(frame) == 'table') then return end
   if hooks.on_frame then hooks.on_frame(frame) end
   if frame.type == 'hello' then
+    -- The relay says this account has switched to encryption.
+    if frame.switched == 1 and is_account_id(settings.account_id) and settings.e2e_account ~= settings.account_id then
+      settings.e2e_account = settings.account_id
+      save()
+    end
     on_hello(client)
   elseif frame.type == 'send' then
     handle_send(client, frame)
@@ -1364,6 +1374,18 @@ end
 -- outage counts as said, so no connection lost line), and updates itself
 -- from vanatell.com as //vt update does, at most once in AUTO_UPDATE_GAP.
 local function refused(reason)
+  -- This version has encryption, but this Lua cannot run it: it is the
+  -- newest there is and can never be let in, so it stops until //vt on or a
+  -- reload.
+  if not pool then
+    app.state, app.opened_at, app.last_error = 'stopped', nil, reason
+    app.outage, app.outage_since, app.outage_said = false, nil, false
+    if not app.no_bit_said then
+      app.no_bit_said = true
+      log("encryption is on for this account and can't run on this PC (no bit library)")
+    end
+    return
+  end
   schedule_retry(reason)
   app.outage_said = true
   local t = now()
@@ -1503,7 +1525,8 @@ local function show_help()
 end
 
 local CONNECTION_TEXT = {open = 'connected', connecting = 'connecting', unpaired = 'not paired',
-                         disabled = 'off', unauthorized = 'token rejected, pair again'}
+                         disabled = 'off', unauthorized = 'token rejected, pair again',
+                         stopped = "stopped (encryption is on for this account and can't run on this PC)"}
 
 local function connection_text()
   if app.state ~= 'waiting' then return CONNECTION_TEXT[app.state] end
