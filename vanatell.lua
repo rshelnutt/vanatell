@@ -24,7 +24,7 @@ local hooks = rawget(_G, '__vanatell_test') or {}
 local function load_local(name) return hooks[name] or dofile(windower.addon_path .. name .. '.lua') end
 local json, chat, ws = load_local('json'), load_local('chat'), load_local('ws')
 local linkshells, update = load_local('linkshells'), load_local('update')
-local e2e = load_local('e2e')
+local e2e, random, sha256 = load_local('e2e'), load_local('random'), load_local('sha256')
 local now = hooks.now or require('socket').gettime
 
 local BACKOFF_MIN = 1      -- seconds before the first retry
@@ -114,6 +114,10 @@ local app = {
     keys = nil,        -- this pairing's keys once an exchange completed
     kx = nil,          -- the exchange in progress: {kxId =, id =, h =, recover =, a =}
     sent = {},         -- typed phone sends: {clientId =, id =, typedAt =, ts =}
+    job = nil,         -- the X25519 job in prerender: {stage = 'A' | 's', kx =, data =, job =}
+    reveal = nil,      -- a reveal waiting for A to be worked out again after a reload
+    completed = 0,     -- reveals that matched their commit, this load
+    waited = {},       -- kxId -> true: answered with wait
   },
   auto_update_at = nil, -- when the relay's refusal last started an update
   forced_said = false, -- the refusal's updating line was logged since load
@@ -373,14 +377,270 @@ local function load_keys()
   end
 end
 
--- A new pairing or //vt unpair: the key file and the recovery key go.
+-- What is at hand when harvesting starts, for the pool: times, a table
+-- address, the memory in use, and where the player is.
+local function start_values()
+  local parts = {tostring(os.time()), string.format('%.17g', now()), tostring(os.clock()), tostring({}),
+                 tostring(collectgarbage('count'))}
+  pcall(function()
+    local player = windower.ffxi.get_player()
+    if player then parts[#parts + 1] = tostring(player.status) .. ',' .. tostring(player.index) end
+    local me = windower.ffxi.get_mob_by_target and windower.ffxi.get_mob_by_target('me')
+    if me then parts[#parts + 1] = string.format('%.17g,%.17g,%.17g', me.x or 0, me.y or 0, me.z or 0) end
+  end)
+  return table.concat(parts, ';')
+end
+
+-- The entropy pool the private keys come from (random.lua), when this Lua
+-- can encrypt at all. It listens to input and packets only while the addon
+-- has no keys.
+local pool
+if e2e.available() then
+  pool = random.new{
+    now = now,
+    events = {register = windower.register_event, unregister = windower.unregister_event},
+    system = rawget(windower, 'system_random'),
+    seed_path = DATA_DIR .. 'entropy.seed',
+    sha256 = sha256,
+    start_values = start_values,
+  }
+end
+
+local function harvest()
+  if pool and not app.e2e.keys then
+    ensure_data_dir()
+    pool:start()
+  end
+end
+
+-- A new pairing or //vt unpair: the key file and the recovery key go, and
+-- so does any exchange in progress; harvesting starts again.
 local function delete_keys()
   local s = app.e2e
-  s.keys, s.kx, s.sent = nil, nil, {}
+  s.keys, s.kx, s.sent, s.job, s.reveal = nil, nil, {}, nil, nil
   os.remove(KEY_FILE)
   os.remove(KEY_FILE .. '.tmp')
   settings.recover_key, settings.recover_key_id = '', ''
   save()
+  harvest()
+end
+
+---------------------------------------------------------------------------
+-- The key exchange with the phone, through the relay (kx frames).
+---------------------------------------------------------------------------
+-- The phone commits to its key (commit), the addon answers with its own
+-- (key; wait while its randomness is not ready), the phone reveals its key
+-- (reveal), and the addon checks it against the commitment, works out the
+-- keys and proves it holds them (confirm), which it sends again on every
+-- connect until the phone proves it too (done). A commit names the recovery
+-- key's key id when the addon lost its key file but kept its recovery key;
+-- both sides then prove that key. Each scalar multiplication runs as a job a
+-- few ladder steps per prerender. While the addon holds keys it takes no
+-- commit (already set up): only //vt pair and //vt unpair remove them.
+local MAX_EXCHANGES = 10 -- reveals that matched their commit, per load
+
+local function send_kx(fields)
+  if app.state ~= 'open' or not app.client then return end
+  local all = {{'type', 'kx'}}
+  for _, f in ipairs(fields) do all[#all + 1] = f end
+  app.client:send_text(encode_fields(all))
+end
+
+local function abort(id, reason, key)
+  send_kx{{'step', 'abort'}, {'id', id}, {'reason', reason}, {'key', key}}
+end
+
+local function send_key(kx)
+  send_kx{{'step', 'key'}, {'id', kx.kxId}, {'a', e2e.b64url(kx.A)}}
+end
+
+local function send_confirm()
+  local k = app.e2e.keys
+  send_kx{{'step', 'confirm'}, {'id', k.kxId}, {'key', k.keyId}, {'mac', k.mac}, {'rmac', k.rmac}}
+end
+
+local function has_recovery_key()
+  return is_key_id(settings.recover_key_id) and bytes_of(settings.recover_key, 32) ~= nil
+end
+
+-- stage 'A': a·G, the addon's public key; stage 's': a·B, the shared secret.
+local function start_job(stage, kx, data)
+  app.e2e.job = {stage = stage, kx = kx, data = data, job = e2e.x25519_job(kx.a, stage == 'A' and e2e.BASE or data.B)}
+end
+
+-- The exchange in progress gets its private key from the pool, or a wait
+-- (once) while the pool is not ready.
+local function make_key()
+  local s = app.e2e
+  local kx = s.kx
+  if not kx or kx.a or s.keys or s.job then return end
+  local a = pool:take()
+  if a then
+    kx.a = a
+    write_keyfile()
+    start_job('A', kx)
+  elseif not s.waited[kx.kxId] then
+    s.waited[kx.kxId] = true
+    send_kx{{'step', 'wait'}, {'id', kx.kxId}}
+  end
+end
+
+local function forget_exchange()
+  local s = app.e2e
+  s.kx, s.job, s.reveal = nil, nil, nil
+  write_keyfile()
+end
+
+-- The reveal checked, A known: on a recovery the phone's proof, then the
+-- shared secret's job.
+local function begin_shared(reveal)
+  local s = app.e2e
+  local kx = s.kx
+  s.reveal = nil
+  local th = e2e.transcript(settings.account_id, kx.id, kx.A, reveal.B)
+  if kx.recover then
+    local rk, rmac = bytes_of(settings.recover_key, 32), bytes_of(reveal.rmac, 16)
+    if not (rk and rmac and kx.recover == settings.recover_key_id and rmac == e2e.recover_mac(rk, 'phone', th)) then
+      forget_exchange()
+      return abort(kx.kxId, 'bad recovery')
+    end
+  end
+  start_job('s', kx, {B = reveal.B, th = th})
+end
+
+-- The shared secret is known: the keys, the key file, the recovery key in
+-- the settings, the safety code in the log, and the confirm.
+local function finish_exchange(kx, data, shared)
+  local s = app.e2e
+  if not shared then
+    forget_exchange()
+    return abort(kx.kxId, 'bad key')
+  end
+  local th = data.th
+  local k = e2e.derive(shared, th)
+  local key_id, code = e2e.key_id(th), e2e.safety_code(th)
+  local rmac
+  if kx.recover then rmac = e2e.b64url(e2e.recover_mac(bytes_of(settings.recover_key, 32), 'addon', th)) end
+  s.keys = {keyId = key_id, code = code, lineKey = k.lineKey, lineNonce = k.lineNonce, sendKey = k.sendKey,
+            recoverKey = k.recoverKey, A = kx.A, B = data.B, kxId = kx.kxId, mac = e2e.b64url(e2e.confirm_mac(k.confirmKey, th)),
+            rmac = rmac, acked = false, doneMac = e2e.b64url(e2e.done_mac(k.confirmKey, th))}
+  s.kx, s.reveal = nil, nil
+  write_keyfile()
+  settings.recover_key, settings.recover_key_id = e2e.b64url(k.recoverKey), key_id
+  settings.e2e_account = settings.account_id
+  save()
+  pool:stop()
+  log('encryption on. Safety code: ' .. code .. '. The app shows the same code in Settings, under Encryption.')
+  send_confirm()
+end
+
+-- Every prerender: one step of the job, or the pool asked again for a key.
+local function pump_job()
+  local s = app.e2e
+  local j = s.job
+  if not j then return make_key() end
+  if s.kx ~= j.kx or s.keys then
+    s.job = nil
+    return
+  end
+  local result = j.job:step(e2e.STEPS)
+  if result == nil then return end
+  s.job = nil
+  if j.stage == 's' then return finish_exchange(j.kx, j.data, result) end
+  j.kx.A = result
+  if s.reveal and s.reveal.kxId == j.kx.kxId then return begin_shared(s.reveal) end
+  send_key(j.kx)
+end
+
+local function on_commit(frame)
+  local s = app.e2e
+  local h = bytes_of(frame.h, 32)
+  if not h or (frame.recover ~= nil and not is_key_id(frame.recover)) then return end
+  if s.keys then return abort(frame.id, 'already set up') end
+  if has_recovery_key() and frame.recover ~= settings.recover_key_id then
+    return abort(frame.id, 'recovery required', settings.recover_key_id)
+  end
+  if s.completed >= MAX_EXCHANGES then return abort(frame.id, 'too many') end
+  local kx = s.kx
+  if kx and kx.kxId == frame.id and kx.h == h then -- the same commit again
+    if kx.A then send_key(kx) end
+    return
+  end
+  s.kx, s.job, s.reveal = {kxId = frame.id, id = bytes_of(frame.id, 16), h = h, recover = frame.recover}, nil, nil
+  write_keyfile()
+  make_key()
+end
+
+local function on_reveal(frame)
+  local s = app.e2e
+  if s.keys then
+    if frame.id == s.keys.kxId then return send_confirm() end
+    return abort(frame.id, 'unknown exchange')
+  end
+  local kx = s.kx
+  if not (kx and kx.kxId == frame.id and kx.a) then return abort(frame.id, 'unknown exchange') end
+  if (s.job and s.job.stage == 's' and s.job.kx == kx) or s.reveal then return end -- being worked on
+  local B = bytes_of(frame.b, 32)
+  if not B or e2e.commit_hash(kx.id, B) ~= kx.h then
+    forget_exchange()
+    return abort(frame.id, 'commit mismatch')
+  end
+  s.completed = s.completed + 1
+  local reveal = {kxId = frame.id, B = B, rmac = frame.rmac}
+  if kx.A then return begin_shared(reveal) end
+  s.reveal = reveal
+  if not (s.job and s.job.kx == kx) then start_job('A', kx) end
+end
+
+local function on_kx(frame)
+  if not pool or not bytes_of(frame.id, 16) then return end
+  local s, step = app.e2e, frame.step
+  if step == 'commit' then
+    on_commit(frame)
+  elseif step == 'reveal' then
+    on_reveal(frame)
+  elseif step == 'done' then
+    local k = s.keys
+    if k and not k.acked and frame.id == k.kxId and k.doneMac and frame.mac == k.doneMac then
+      k.acked = true
+      write_keyfile()
+    end
+  elseif step == 'abort' then
+    if s.kx and frame.id == s.kx.kxId then forget_exchange() end
+  end
+end
+
+-- On every connect, once the relay says hello: the confirm again until the
+-- phone acknowledged it, or the key again while its reveal has not come.
+local function resend_kx()
+  local s = app.e2e
+  if not pool then return end
+  if s.keys then
+    if not s.keys.acked then send_confirm() end
+  elseif s.kx and s.kx.A then
+    send_key(s.kx)
+  end
+end
+
+-- The socket URL: whether this addon can encrypt, its key id, and the key
+-- id of the recovery key it holds when it has no keys.
+local function socket_url()
+  local url = RELAY_URL .. '/v1/ws?role=addon'
+  if not pool then return url end
+  local s = app.e2e
+  local recover = (not s.keys and has_recovery_key()) and settings.recover_key_id or ''
+  return url .. '&e2e=1&key=' .. (s.keys and s.keys.keyId or '') .. '&recover=' .. recover
+end
+
+local function encryption_text()
+  local s = app.e2e
+  if not pool then return 'off (not available here)' end
+  if s.keys then return 'on, safety code ' .. s.keys.code end
+  if s.kx then
+    if not s.kx.a and s.waited[s.kx.kxId] then return 'setting up (gathering randomness)' end
+    return 'setting up'
+  end
+  return 'off (waiting for the app; if the app says this addon needs an update, encryption is being blocked)'
 end
 
 -- ls1 and ls2 frames name the shell the game said is in that slot, or null
@@ -914,6 +1174,7 @@ local function on_hello(client)
   for _, frame in ipairs(queue) do client:send_text(frame) end
   local t = now()
   app.state = 'open'
+  resend_kx()
   app.last_rx, app.last_ping, app.opened_at = t, t, t
   if app.outage_said then
     log('reconnected to relay')
@@ -939,6 +1200,8 @@ local function on_message(client, text)
     on_hello(client)
   elseif frame.type == 'send' then
     handle_send(client, frame)
+  elseif frame.type == 'kx' then
+    on_kx(frame)
   end
 end
 
@@ -992,7 +1255,7 @@ end
 
 local function connect()
   local client = ws.new{
-    url = RELAY_URL .. '/v1/ws?role=addon',
+    url = socket_url(),
     headers = {{'Authorization', 'Bearer ' .. settings.token}},
     cafile = CA_FILE,
     on_open = on_open,
@@ -1168,6 +1431,7 @@ function commands.status()
   log('connection: ' .. connection_text())
   log('queued: ' .. #app.queue)
   log('linkshells: ' .. linkshells_text())
+  log('encryption: ' .. encryption_text())
 end
 
 function commands.on()
@@ -1218,6 +1482,9 @@ windower.register_event('load', function()
   updater:on_load()
   read_queue()
   load_keys()
+  harvest()
+  local s = app.e2e
+  if pool and s.kx and s.kx.a and not s.keys then start_job('A', s.kx) end -- to answer the commit again
   start()
 end)
 
@@ -1231,6 +1498,7 @@ windower.register_event('unload', function()
     if update.newer(QUEUE_SINCE, updater.reload_version) then os.remove(QUEUE_FILE) else write_queue() end
   end
   updater:on_unload()
+  if pool then pool:on_unload() end
   local client = app.client
   app.client = nil
   if client then client:abort() end
@@ -1240,6 +1508,10 @@ windower.register_event('prerender', function()
   if app.pairing then app.pairing:pump() end
   updater:pump()
   local t = now()
+  if pool then
+    pool:pump(t)
+    pump_job()
+  end
   if app.outage and not app.outage_said and (app.state == 'waiting' or app.state == 'connecting')
       and t - app.outage_since >= QUIET_DROP then
     app.outage_said = true
