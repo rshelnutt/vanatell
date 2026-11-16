@@ -488,13 +488,13 @@ function U:fail(job, why)
   self:say('VanaTell: update failed: ' .. tostring(why) .. '; still on ' .. tostring(self.version))
 end
 
--- //vt update, with opts nil. The update the connection starts when the
--- relay requires one: opts = {auto = true, on_none = fn(), before_reload =
--- fn()}. It says nothing when it cannot start (an update running, reloading,
--- updates off) and skips checking for updates..., as the connection has said
--- why it runs; on_none replaces already up to date, and before_reload runs
--- once the new files are in place, just before the reload. Its other lines
--- are those of //vt update.
+-- //vt update: opts = {before_reload = fn()}, which runs once the new files
+-- are in place, just before the reload. The update the connection starts
+-- when the relay requires one adds auto = true and on_none = fn(): it says
+-- nothing when it cannot start (an update running, reloading, updates off)
+-- and skips checking for updates..., as the connection has said why it runs,
+-- and on_none replaces already up to date. Its other lines are those of
+-- //vt update.
 function U:run_update(opts)
   opts = opts or {}
   local auto = opts.auto

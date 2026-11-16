@@ -68,7 +68,7 @@ local PING = '{"type":"ping"}'
 local CA_FILE = windower.addon_path .. 'relay-roots.txt'
 -- The folder of the settings: data/ on Windower, config/addons/vanatell/ on Ashita.
 local DATA_DIR = rawget(windower, 'data_dir') or (windower.addon_path .. 'data/')
-local QUEUE_FILE = DATA_DIR .. 'queue.json' -- the queue, only across the reload of an update the relay required
+local QUEUE_FILE = DATA_DIR .. 'queue.json' -- the queue, only across an update's reload
 -- What the newest version is and which files it holds (update.lua).
 local UPDATE_URL = 'https://vanatell.com/addon/latest.json'
 
@@ -275,10 +275,10 @@ local function deliver(frame)
   end
 end
 
--- Just before the reload of an update the relay required (close 4004), the
--- queue goes to queue.json, through queue.json.tmp and a rename; the next
--- load reads it back and deletes it at once (read_queue). This is the only
--- time chat is written to disk.
+-- Just before an update's reload (//vt update, or the one the relay's
+-- refusal starts), the queue goes to queue.json, through queue.json.tmp and
+-- a rename; the next load reads it back and deletes it at once (read_queue).
+-- This is the only time chat is written to disk.
 local function write_queue()
   if #app.queue == 0 then return end
   if not windower.dir_exists(DATA_DIR) then pcall(windower.create_dir, DATA_DIR) end
@@ -1028,7 +1028,7 @@ function commands.unpair()
 end
 
 function commands.update()
-  updater:run_update()
+  updater:run_update{before_reload = write_queue}
 end
 
 function commands.rollback()
