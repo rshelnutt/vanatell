@@ -126,9 +126,11 @@ VanaTell: linkshells: 1=KupoKnights 2=(none)
 
 ## Updating
 
-Each time it loads, the addon asks vanatell.com once for the newest version number. If there is a newer one, it says so in the game log, for example `VanaTell X.Y.Z is available: type //vt update`. Nothing is downloaded until you type it.
+Each time it loads, the addon asks vanatell.com once for the newest version number. If there is a newer one, it says so in the game log, for example `VanaTell X.Y.Z is available: type //vt update`. Nothing is downloaded until you type it, or until the relay requires an update (below).
 
 `//vt update` (on Ashita, `/vt update`) downloads only the files that changed, checks each one's size and SHA-256 against the list vanatell.com publishes, copies the files it replaces into `backup/` in the addon folder, puts the new ones in place and reloads the addon, which then says `VanaTell: updated to X.Y.Z`. If anything fails, no file is changed and the version you have keeps running. Your settings and pairing are never touched. You can type it any time; with the newest version it says `already up to date`.
+
+The addon also updates itself when the relay requires it. If the relay refuses this version, the addon says `VanaTell: encryption is on for this account; updating to the newest version` and runs the same update as `//vt update`, with every check it makes, at most once every 10 minutes. Lines said meanwhile are kept and sent once it reconnects. With `//vt off` (`/vt off`) the addon does not connect, so it never updates by itself.
 
 `//vt rollback` (`/vt rollback`) puts back the files the last update replaced and reloads.
 
@@ -144,7 +146,7 @@ To update by hand instead, download the zip from [Releases](../../releases) as i
 
 **Asked of vanatell.com**
 
-- On load, and when you type `//vt update`, the newest version number and its file list. The request says only the addon's version and whether it is Windower or Ashita.
+- On load, when you type `//vt update`, and when the relay requires an update, the newest version number and its file list. The request says only the addon's version and whether it is Windower or Ashita.
 
 **Never sent**
 
@@ -160,7 +162,7 @@ To update by hand instead, download the zip from [Releases](../../releases) as i
 
 - `addons/vanatell/data/settings.xml` holds this PC's pairing token in plain text. Treat it like a password. `//vt unpair` wipes the token.
 - On Ashita that file is `config/addons/vanatell/settings.json` in the Ashita folder, shared by all your characters. Treat it like a password too. `/vt unpair` wipes the token.
-- Lines that arrive while the relay is out of reach wait in memory, up to 500, and are never written to disk.
+- Lines that arrive while the relay is out of reach wait in memory, up to 500. They are written to disk only for the seconds the reload of an automatic update takes, in `addons/vanatell/data/queue.json` (on Ashita, `config/addons/vanatell/queue.json`), then read back and deleted.
 
 Everything travels over an encrypted connection, and the addon checks the relay's certificate, and vanatell.com's for updates, against the small list of trust roots in `relay-roots.txt`. That file is not a certificate to install; it is only read by the addon.
 
