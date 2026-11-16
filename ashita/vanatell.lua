@@ -9,8 +9,11 @@ in this folder for what you may and may not do with it.
 -- calls that addon makes, built on Ashita's API.
 --   events     load, unload, d3d_present (Windower's prerender), packet_in
 --              and packet_out (incoming and outgoing chunk), command (the
---              /vt commands), and login and logout read from the zone
---              packets the way Ashita's settings library reads them
+--              /vt commands), mouse and key (Windower's mouse and keyboard,
+--              which only the entropy pool listens to, and only until the
+--              addon has its keys), and login and logout read from the zone
+--              packets the way Ashita's settings library reads them; an
+--              event registered can be unregistered by its id
 --   chat       AddChatMessage for the log; QueueCommand types what the phone
 --              sends, as if the player typed it, and runs /addon reload
 --              vanatell after //vt update or //vt rollback
@@ -21,6 +24,9 @@ in this folder for what you may and may not do with it.
 --              queue.json, across an update's reload, sits beside it
 --   TLS        Ashita ships LuaSec as socket.ssl; the addon asks for ssl
 --   files      ashita.fs for the folders an update writes (backup/, assets/)
+--   randomness Windows' own generator for the addon's private keys, through
+--              LuaJIT's FFI: BCryptGenRandom (bcrypt), else SystemFunction036
+--              (advapi32); each call inside pcall, and nil when neither works
 -- Everything else (the relay connection, pairing, chat, the offline queue,
 -- linkshell detection) is the shared code, unchanged. In the release folder
 -- main.lua is the Windower addon's vanatell.lua.
@@ -263,9 +269,21 @@ end
 local handlers = {login = {}, logout = {}}
 local aliases = 0
 
+-- -> how to unregister it
 local function on(event, fn)
   aliases = aliases + 1
-  ashita.events.register(event, 'vanatell_' .. aliases, fn)
+  local alias = 'vanatell_' .. aliases
+  ashita.events.register(event, alias, fn)
+  return function() ashita.events.unregister(event, alias) end
+end
+
+local function on_list(list, fn)
+  table.insert(list, fn)
+  return function()
+    for i, f in ipairs(list) do
+      if f == fn then return table.remove(list, i) end
+    end
+  end
 end
 
 -- /vt <args...>: the command is Ashita's to block, so the game never sees it.
@@ -280,33 +298,48 @@ local function command_handler(fn)
 end
 
 local ASHITA_EVENTS = {
-  load = function(fn) on('load', function() fn() end) end,
-  unload = function(fn) on('unload', function() fn() end) end,
-  prerender = function(fn) on('d3d_present', function() fn() end) end,
+  load = function(fn) return on('load', function() fn() end) end,
+  unload = function(fn) return on('unload', function() fn() end) end,
+  prerender = function(fn) return on('d3d_present', function() fn() end) end,
   -- A handler that returns true blocks the packet, as on Windower.
   ['incoming chunk'] = function(fn)
-    on('packet_in', function(e)
+    return on('packet_in', function(e)
       if fn(e.id, e.data, e.data_modified, e.injected, e.blocked) == true then e.blocked = true end
     end)
   end,
   ['outgoing chunk'] = function(fn)
-    on('packet_out', function(e) fn(e.id, e.data, e.data_modified, e.injected, e.blocked) end)
+    return on('packet_out', function(e) fn(e.id, e.data, e.data_modified, e.injected, e.blocked) end)
   end,
-  ['addon command'] = function(fn) on('command', command_handler(fn)) end,
-  login = function(fn) table.insert(handlers.login, fn) end,
-  logout = function(fn) table.insert(handlers.logout, fn) end,
+  -- Input, for the entropy pool only: never blocked.
+  mouse = function(fn) return on('mouse', function(e) fn(e.message, e.x, e.y, e.delta, e.blocked) end) end,
+  keyboard = function(fn) return on('key', function(e) fn(e.wparam, e.lparam, e.blocked) end) end,
+  ['addon command'] = function(fn) return on('command', command_handler(fn)) end,
+  login = function(fn) return on_list(handlers.login, fn) end,
+  logout = function(fn) return on_list(handlers.logout, fn) end,
 }
 
--- windower.register_event(name, [name2, ...], fn)
+local registered, registrations = {}, 0
+
+-- windower.register_event(name, [name2, ...], fn) -> an id for unregister_event
 local function register_event(...)
   local n = select('#', ...)
   local fn = select(n, ...)
+  local undo = {}
   for i = 1, n - 1 do
     local name = select(i, ...)
     local register = ASHITA_EVENTS[name]
     if not register then error('vanatell: no Ashita event for ' .. tostring(name)) end
-    register(fn)
+    undo[#undo + 1] = register(fn)
   end
+  registrations = registrations + 1
+  registered[registrations] = undo
+  return registrations
+end
+
+local function unregister_event(id)
+  local undo = registered[id]
+  registered[id] = nil
+  for _, f in ipairs(undo or {}) do f() end
 end
 
 -- Login: the first zone-in (0x00A) after load while not logged in, or after a
@@ -323,6 +356,42 @@ on('packet_in', function(e)
     for _, fn in ipairs(handlers.logout) do fn() end
   end
 end)
+
+---------------------------------------------------------------------------
+-- Windows' random generator, for the addon's private keys.
+---------------------------------------------------------------------------
+-- Ashita's client is 32-bit, so both are declared __stdcall. ffi.C does not
+-- export them; each library is loaded when first asked for.
+local ffi_ok, ffi = pcall(require, 'ffi')
+if ffi_ok and ffi then
+  pcall(ffi.cdef, [[
+long __stdcall BCryptGenRandom(void *alg, unsigned char *buf, unsigned long len, unsigned long flags);
+unsigned char __stdcall SystemFunction036(void *buf, unsigned long len);
+]])
+else
+  ffi = nil
+end
+
+-- n bytes from BCryptGenRandom(nil, buf, n, BCRYPT_USE_SYSTEM_PREFERRED_RNG),
+-- 0 meaning success; else from SystemFunction036 (RtlGenRandom), non-zero
+-- meaning success; else nil.
+local function system_random(n)
+  if not ffi then return nil end
+  local ok, buf = pcall(ffi.new, 'unsigned char[?]', n)
+  if not ok then return nil end
+  local loaded, bcrypt = pcall(ffi.load, 'bcrypt')
+  if loaded then
+    local called, status = pcall(function() return bcrypt.BCryptGenRandom(nil, buf, n, 2) end)
+    if called and tonumber(status) == 0 then return ffi.string(buf, n) end
+  end
+  local advapi32
+  loaded, advapi32 = pcall(ffi.load, 'advapi32')
+  if loaded then
+    local called, status = pcall(function() return advapi32.SystemFunction036(buf, n) end)
+    if called and tonumber(status) ~= 0 then return ffi.string(buf, n) end
+  end
+  return nil
+end
 
 ---------------------------------------------------------------------------
 -- The stand-in, then the shared addon.
@@ -344,6 +413,7 @@ end
 windower = {
   addon_path = ADDON_PATH,
   register_event = register_event,
+  unregister_event = unregister_event,
   add_to_chat = add_to_chat,
   console = console,
   send_command = send_command,
@@ -352,7 +422,8 @@ windower = {
   platform = 'ashita',
   dir_exists = function(path) return ashita.fs.exists(path) end,
   create_dir = function(path) return (ashita.fs.create_directory or ashita.fs.create_dir)(path) end,
-  data_dir = SETTINGS_DIR, -- queue.json beside settings.json, never in the addon folder
+  data_dir = SETTINGS_DIR, -- queue.json, e2e.json and entropy.seed beside settings.json, never in the addon folder
+  system_random = system_random,
 }
 _addon = {}
 
