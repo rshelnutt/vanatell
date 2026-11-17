@@ -14,7 +14,7 @@ in this folder for what you may and may not do with it.
 -- is pumped from prerender and never blocks.
 _addon.name = 'vanatell'
 _addon.command = 'vt'
-_addon.version = '0.3.9'
+_addon.version = '0.4.0'
 
 local config = require('config')
 
@@ -24,6 +24,7 @@ local hooks = rawget(_G, '__vanatell_test') or {}
 local function load_local(name) return hooks[name] or dofile(windower.addon_path .. name .. '.lua') end
 local json, chat, ws = load_local('json'), load_local('chat'), load_local('ws')
 local linkshells, update = load_local('linkshells'), load_local('update')
+local e2e, random, sha256 = load_local('e2e'), load_local('random'), load_local('sha256')
 local now = hooks.now or require('socket').gettime
 
 local BACKOFF_MIN = 1      -- seconds before the first retry
@@ -34,9 +35,11 @@ local PING_INTERVAL = 30   -- seconds between keepalive pings
 local IDLE_TIMEOUT = 90    -- silence from the relay this long means the link is dead
 local AUTO_UPDATE_GAP = 600 -- seconds between two updates started by the relay's refusal (close 4004)
 local MAX_FRAMES = 20      -- frames decoded per prerender
+local OPENS_MAX = 1        -- sealed sends opened per prerender; a burst (the relay's outbox after a reconnect) waits in the socket for the next frames
 
 local QUEUE_MAX = 500         -- chat frames held while disconnected
-local ECHO_WINDOW = 10        -- seconds a phone send waits for the game's copy of it
+local ECHO_WINDOW = 30        -- seconds a phone send waits for the game's copy of it (the relay's window)
+local SEAL_BUDGET = 0.002     -- seconds of sealing a prerender, past the first line
 local EXECUTED_IDS_MAX = 200  -- send ids remembered, so a replayed id runs once
 local RELAY_MESSAGE_MAX = 120 -- characters of a relay error message shown in game
 local ACCOUNT_ID_MAX = 64     -- longest accountId accepted from the relay
@@ -70,6 +73,8 @@ local CA_FILE = windower.addon_path .. 'relay-roots.txt'
 local DATA_DIR = rawget(windower, 'data_dir') or (windower.addon_path .. 'data/')
 local QUEUE_FILE = DATA_DIR .. 'queue.json' -- the queue, only across an update's or a rollback's reload
 local QUEUE_SINCE = '0.3.9' -- the first version that reads queue.json back
+-- This pairing's encryption keys, and the exchange in progress (the key file).
+local KEY_FILE = DATA_DIR .. 'e2e.json'
 -- What the newest version is and which files it holds (update.lua).
 local UPDATE_URL = 'https://vanatell.com/addon/latest.json'
 
@@ -78,17 +83,31 @@ local UPDATE_URL = 'https://vanatell.com/addon/latest.json'
 -- Every install talks to the one VanaTell relay; it cannot be changed. A relay address saved by an older version is
 -- dropped. (Tests put a stand-in relay in __vanatell_test.)
 local RELAY_URL = hooks.relay_url or 'wss://relay.vanatell.com'
-local settings = config.load({token = '', account_id = '', enabled = true, ls_slots = ''})
-if type(settings.ls_slots) ~= 'string' then settings.ls_slots = '' end
+-- recover_key: the key id of this pairing's keys and their recovery key,
+-- '<key id>:<key>', kept beside the token so a lost key file is recovered by
+-- itself. It is one string with a ':' because Windower's config library
+-- reads back a value that looks like a number as a number, and a key id
+-- alone (16 hex digits) can look like one. recover_key_id: where the key id
+-- was kept on its own before; still read, and emptied whenever the recovery
+-- key is written.
+-- e2e_account: the account this PC knows has switched to encryption
+-- (rollbacks below encryption are refused for it).
+local settings = config.load({token = '', account_id = '', enabled = true, ls_slots = '', recover_key = '',
+                              recover_key_id = '', e2e_account = ''})
+for _, key in ipairs({'ls_slots', 'recover_key', 'recover_key_id', 'e2e_account'}) do
+  if type(settings[key]) ~= 'string' then settings[key] = '' end
+end
 settings.url = nil
 
--- state: unpaired | disabled | waiting | connecting | open | unauthorized
+-- state: unpaired | disabled | waiting | connecting | open | unauthorized | stopped
 local app = {
   state = 'unpaired',
   client = nil,        -- the live ws client; callbacks from any other are ignored
   backoff = BACKOFF_MIN,
   next_attempt = 0,    -- when waiting: the time of the next connect
   queue = {},          -- encoded chat frames held while disconnected
+  sealing = {},        -- lines captured with keys, waiting for the next prerender to seal them
+  opened = 0,          -- sealed sends opened this prerender
   queue_full = false,  -- the queue full line was logged since the last flush
   executed = {},       -- send id -> true, for the ids in executed_order
   executed_order = {}, -- the last EXECUTED_IDS_MAX executed send ids, oldest first
@@ -100,8 +119,19 @@ local app = {
   outage_since = nil,  -- when the outage began
   outage_said = false, -- the connection lost line was logged for this outage
   announced = false,   -- connected to relay was logged since the last deliberate start
+  e2e = {              -- encryption (e2e.lua), from the key file
+    keys = nil,        -- this pairing's keys once an exchange completed
+    kx = nil,          -- the exchange in progress: {kxId =, id =, h =, recover =, a =}
+    sent = {},         -- opened phone sends, typed or refused: {clientId =, id =, typedAt =, ts =, error =}
+    job = nil,         -- the X25519 job in prerender: {stage = 'A' | 's', kx =, data =, job =}
+    reveal = nil,      -- a reveal waiting for A to be worked out again after a reload
+    completed = 0,     -- reveals that matched their commit, this load
+    waited = {},       -- kxId -> true: answered with wait
+    seq = 0,           -- lines sealed since load
+  },
   auto_update_at = nil, -- when the relay's refusal last started an update
   forced_said = false, -- the refusal's updating line was logged since load
+  no_bit_said = false, -- the refusal's no bit library line was logged since load
   no_newer_said = false, -- the refusal's no newer version line was logged since load
   opened_at = nil, last_rx = nil, last_ping = nil,
   ls = {               -- linkshell detection
@@ -191,6 +221,10 @@ local updater = update.new{
   fs = {dir_exists = windower.dir_exists, create_dir = windower.create_dir},
   sha256 = hooks.sha256,
   budget = hooks.hash_budget,
+  -- Keys held, or the relay said so (e2e_account): no rollback below encryption.
+  switched = function()
+    return app.e2e.keys ~= nil or (is_set(settings.e2e_account) and settings.e2e_account == settings.account_id)
+  end,
 }
 hooks.updater = updater
 
@@ -218,6 +252,506 @@ local function encode_fields(fields)
   return '{' .. table.concat(parts, ',') .. '}'
 end
 
+---------------------------------------------------------------------------
+-- The key file: data/e2e.json (Ashita: config/addons/vanatell/e2e.json).
+---------------------------------------------------------------------------
+-- It holds the account it belongs to, this pairing's keys once an exchange
+-- has completed, the exchange in progress (so a reload or a closed game
+-- loses nothing) and the phone sends opened in the last 12 hours, with the
+-- error of each one that was refused after it was opened. It is
+-- written through e2e.json.tmp and a rename. A file that does not parse, is
+-- malformed, or names another account counts as no file. Only a successful
+-- //vt pair and //vt unpair delete it.
+local function bytes_of(v, n)
+  local raw = type(v) == 'string' and e2e.unb64url(v)
+  if raw and #raw == n then return raw end
+  return nil
+end
+
+local function is_key_id(v)
+  return type(v) == 'string' and #v == 16 and v:find('^[0-9a-f]+$') ~= nil
+end
+
+-- The recovery key in the settings -> its key id, the key (b64url) | nil.
+-- '<key id>:<key>' in recover_key, or the earlier form, the key id in
+-- recover_key_id.
+local function recovery()
+  local id, key = settings.recover_key:match('^(%x+):(.+)$')
+  if not id then id, key = settings.recover_key_id, settings.recover_key end
+  if is_key_id(id) and bytes_of(key, 32) then return id, key end
+  return nil
+end
+
+-- id, key (b64url), or nothing to clear it.
+local function set_recovery(id, key)
+  settings.recover_key = id and (id .. ':' .. key) or ''
+  settings.recover_key_id = ''
+end
+
+local KEY_BYTES = {'lineKey', 'lineNonce', 'sendKey', 'recoverKey', 'A', 'B'}
+
+-- The file's keys -> in memory: the 32-byte keys raw, the rest as written.
+local function parse_keys(k)
+  if type(k) ~= 'table' or not is_key_id(k.keyId) or type(k.acked) ~= 'boolean'
+     or type(k.code) ~= 'string' or not k.code:find('^%d%d%d%d %d%d%d%d %d%d%d%d$') then
+    return nil
+  end
+  local keys = {keyId = k.keyId, code = k.code, kxId = k.kxId, mac = k.mac, rmac = k.rmac, doneMac = k.doneMac, acked = k.acked}
+  for _, name in ipairs(KEY_BYTES) do
+    keys[name] = bytes_of(k[name], 32)
+    if not keys[name] then return nil end
+  end
+  if not (bytes_of(k.kxId, 16) and bytes_of(k.mac, 16)) then return nil end
+  if k.rmac ~= nil and not bytes_of(k.rmac, 16) then return nil end
+  if k.doneMac ~= nil and not bytes_of(k.doneMac, 16) then return nil end
+  return keys
+end
+
+local function parse_kx(x)
+  if type(x) ~= 'table' then return nil end
+  local kx = {kxId = x.kxId, id = bytes_of(x.kxId, 16), h = bytes_of(x.h, 32), recover = x.recover}
+  if not (kx.id and kx.h) or (x.recover ~= nil and not is_key_id(x.recover)) then return nil end
+  if x.a ~= nil then
+    kx.a = bytes_of(x.a, 32)
+    if not kx.a then return nil end
+  end
+  return kx
+end
+
+local function is_time(v)
+  return type(v) == 'number' and v == v and v >= 0 and v < 2 ^ 53 and v % 1 == 0
+end
+
+local function parse_sent(list)
+  if list == nil then return {} end
+  if type(list) ~= 'table' then return nil end
+  local sent = {}
+  for i, r in ipairs(list) do
+    if not (type(r) == 'table' and type(r.clientId) == 'string' and is_time(r.id) and r.id >= 1
+            and is_time(r.typedAt) and is_time(r.ts) and (r.error == nil or type(r.error) == 'string')) then
+      return nil
+    end
+    sent[i] = {clientId = r.clientId, id = r.id, typedAt = r.typedAt, ts = r.ts, error = r.error}
+  end
+  return sent
+end
+
+-- Before path.tmp is opened for a write, which empties it: a path.tmp that
+-- a failed rename left as the only copy is put in place. -> false while it
+-- cannot be (it is then left as it is)
+local function tmp_in_place(path, tmp)
+  local f = io.open(path, 'rb')
+  if f then
+    f:close()
+    return true
+  end
+  f = io.open(tmp, 'rb')
+  if not f then return true end
+  f:close()
+  return os.rename(tmp, path) and true or false
+end
+
+-- Writes text to path through path.tmp and a rename (Windows will not
+-- rename onto an existing file, so path goes first). A failed write leaves
+-- path as it was; a failed rename leaves path.tmp, which read_written takes
+-- and the next write puts in place first (while it cannot, nothing is
+-- written, so that copy is never emptied).
+local function write_through(path, text)
+  local tmp = path .. '.tmp'
+  if not tmp_in_place(path, tmp) then return end
+  local f = io.open(tmp, 'wb')
+  if not f then return end
+  local ok = f:write(text)
+  f:close()
+  if not ok then
+    os.remove(tmp)
+    return
+  end
+  os.remove(path)
+  os.rename(tmp, path)
+end
+
+-- A file written by write_through: path, or when there is none, the
+-- path.tmp a failed rename left, put in place if it can be. -> its text | nil
+local function read_written(path)
+  local f = io.open(path, 'rb')
+  if not f then
+    local tmp = path .. '.tmp'
+    f = io.open(tmp, 'rb')
+    if f then
+      f:close()
+      if os.rename(tmp, path) then f = io.open(path, 'rb') else f = io.open(tmp, 'rb') end
+    end
+  end
+  if not f then return nil end
+  local text = f:read('*a')
+  f:close()
+  return text
+end
+
+-- -> {keys =, kx =, sent =} | nil (no file, or one that counts as none)
+local function read_keyfile()
+  if not is_account_id(settings.account_id) then return nil end
+  local text = read_written(KEY_FILE)
+  if not text then return nil end
+  local ok, t = pcall(json.decode, text)
+  if not (ok and type(t) == 'table' and t.v == 1 and t.account == settings.account_id) then return nil end
+  local file = {sent = parse_sent(t.sent)}
+  if not file.sent then return nil end
+  if t.keys ~= nil then
+    file.keys = parse_keys(t.keys)
+    if not file.keys then return nil end
+  end
+  if t.kx ~= nil then
+    file.kx = parse_kx(t.kx)
+    if not file.kx then return nil end
+  end
+  return file
+end
+
+local function ensure_data_dir()
+  if not windower.dir_exists(DATA_DIR) then pcall(windower.create_dir, DATA_DIR) end
+end
+
+-- What app.e2e holds, as the key file: keys in a fixed order.
+local function write_keyfile()
+  local s = app.e2e
+  local keys, kx, sent = NULL, NULL, {}
+  if s.keys then
+    local k = s.keys
+    keys = encode_fields{{'keyId', k.keyId}, {'code', k.code}, {'lineKey', e2e.b64url(k.lineKey)},
+      {'lineNonce', e2e.b64url(k.lineNonce)}, {'sendKey', e2e.b64url(k.sendKey)}, {'recoverKey', e2e.b64url(k.recoverKey)},
+      {'A', e2e.b64url(k.A)}, {'B', e2e.b64url(k.B)}, {'kxId', k.kxId}, {'mac', k.mac}, {'rmac', k.rmac or NULL},
+      {'acked', k.acked}, {'doneMac', k.doneMac}}
+  end
+  if s.kx then
+    local x = s.kx
+    kx = encode_fields{{'kxId', x.kxId}, {'h', e2e.b64url(x.h)}, {'recover', x.recover or NULL},
+                       {'a', x.a and e2e.b64url(x.a) or NULL}}
+  end
+  for i, r in ipairs(s.sent) do
+    sent[i] = encode_fields{{'clientId', r.clientId}, {'id', r.id}, {'typedAt', r.typedAt}, {'ts', r.ts}, {'error', r.error}}
+  end
+  local text = '{"v":1,"account":' .. json.encode(settings.account_id) .. ',"keys":' .. (keys == NULL and 'null' or keys)
+    .. ',"kx":' .. (kx == NULL and 'null' or kx) .. ',"sent":[' .. table.concat(sent, ',') .. ']}'
+  ensure_data_dir()
+  write_through(KEY_FILE, text)
+end
+
+-- Load: the key file into app.e2e; its recovery key and key id go into the
+-- settings when they differ there (a crash between the two writes).
+local function load_keys()
+  local file = read_keyfile() or {sent = {}}
+  local s = app.e2e
+  s.keys, s.kx, s.sent = file.keys, file.kx, file.sent
+  local k = s.keys
+  if k then
+    local recover_key = e2e.b64url(k.recoverKey)
+    if settings.recover_key ~= k.keyId .. ':' .. recover_key or settings.recover_key_id ~= '' then
+      set_recovery(k.keyId, recover_key)
+      save()
+    end
+  end
+end
+
+-- What is at hand when harvesting starts, for the pool: times, a table
+-- address, the memory in use, and where the player is.
+local function start_values()
+  local parts = {tostring(os.time()), string.format('%.17g', now()), tostring(os.clock()), tostring({}),
+                 tostring(collectgarbage('count'))}
+  pcall(function()
+    local player = windower.ffxi.get_player()
+    if player then parts[#parts + 1] = tostring(player.status) .. ',' .. tostring(player.index) end
+    local me = windower.ffxi.get_mob_by_target and windower.ffxi.get_mob_by_target('me')
+    if me then parts[#parts + 1] = string.format('%.17g,%.17g,%.17g', me.x or 0, me.y or 0, me.z or 0) end
+  end)
+  return table.concat(parts, ';')
+end
+
+-- The entropy pool the private keys come from (random.lua), when this Lua
+-- can encrypt at all. It listens to input and packets only while the addon
+-- has no keys.
+local pool
+if e2e.available() then
+  pool = random.new{
+    now = now,
+    events = {register = windower.register_event, unregister = windower.unregister_event},
+    system = rawget(windower, 'system_random'),
+    seed_path = DATA_DIR .. 'entropy.seed',
+    sha256 = sha256,
+    start_values = start_values,
+    clocks = {os.clock, now},
+  }
+end
+
+local function harvest()
+  if pool and not app.e2e.keys then
+    ensure_data_dir()
+    pool:start()
+  end
+end
+
+-- A new pairing or //vt unpair: the key file and the recovery key go, and
+-- so does any exchange in progress; harvesting starts again.
+local function delete_keys()
+  local s = app.e2e
+  s.keys, s.kx, s.sent, s.job, s.reveal = nil, nil, {}, nil, nil
+  app.sealing = {} -- captured under keys that are gone
+  os.remove(KEY_FILE)
+  os.remove(KEY_FILE .. '.tmp')
+  set_recovery()
+  save()
+  harvest()
+end
+
+---------------------------------------------------------------------------
+-- The key exchange with the phone, through the relay (kx frames).
+---------------------------------------------------------------------------
+-- The phone commits to its key (commit), the addon answers with its own
+-- (key; wait while its randomness is not ready), the phone reveals its key
+-- (reveal), and the addon checks it against the commitment, works out the
+-- keys and proves it holds them (confirm), which it sends again on every
+-- connect until the phone proves it too (done). A commit names the recovery
+-- key's key id when the addon lost its key file but kept its recovery key;
+-- both sides then prove that key. Each scalar multiplication runs as a job a
+-- few ladder steps per prerender. While the addon holds keys it takes no
+-- commit (already set up): only //vt pair and //vt unpair remove them.
+local MAX_EXCHANGES = 10 -- reveals that matched their commit, per load
+
+local function send_kx(fields)
+  if app.state ~= 'open' or not app.client then return end
+  local all = {{'type', 'kx'}}
+  for _, f in ipairs(fields) do all[#all + 1] = f end
+  app.client:send_text(encode_fields(all))
+end
+
+local function abort(id, reason, key)
+  send_kx{{'step', 'abort'}, {'id', id}, {'reason', reason}, {'key', key}}
+end
+
+local function send_key(kx)
+  send_kx{{'step', 'key'}, {'id', kx.kxId}, {'a', e2e.b64url(kx.A)}}
+end
+
+local function send_confirm()
+  local k = app.e2e.keys
+  send_kx{{'step', 'confirm'}, {'id', k.kxId}, {'key', k.keyId}, {'mac', k.mac}, {'rmac', k.rmac}}
+end
+
+-- stage 'A': a·G, the addon's public key; stage 's': a·B, the shared secret.
+local function start_job(stage, kx, data)
+  app.e2e.job = {stage = stage, kx = kx, data = data, job = e2e.x25519_job(kx.a, stage == 'A' and e2e.BASE or data.B)}
+end
+
+-- A stage of the exchange that is not a scalar multiplication.
+local STAGE = {ladder_done = 255}
+
+-- The exchange in progress gets its private key from the pool, or a wait
+-- (once) while the pool is not ready. A ready pool still finishing a mix
+-- gives the key a few frames later, with no wait. The key file is written
+-- and the job started in the next prerender (stage 'save').
+local function make_key()
+  local s = app.e2e
+  local kx = s.kx
+  if not kx or kx.a or s.keys or s.job then return end
+  local a = pool:take()
+  if a then
+    kx.a = a
+    s.job = {stage = 'save', kx = kx, job = STAGE}
+  elseif not pool:ready() and not s.waited[kx.kxId] then
+    s.waited[kx.kxId] = true
+    send_kx{{'step', 'wait'}, {'id', kx.kxId}}
+  end
+end
+
+local function forget_exchange()
+  local s = app.e2e
+  s.kx, s.job, s.reveal = nil, nil, nil
+  write_keyfile()
+end
+
+-- The reveal checked, A known: on a recovery the phone's proof, then the
+-- shared secret's job.
+local function begin_shared(reveal)
+  local s = app.e2e
+  local kx = s.kx
+  s.reveal = nil
+  local th = e2e.transcript(settings.account_id, kx.id, kx.A, reveal.B)
+  if kx.recover then
+    local id, key = recovery()
+    local rk, rmac = bytes_of(key, 32), bytes_of(reveal.rmac, 16)
+    if not (rk and rmac and kx.recover == id and rmac == e2e.recover_mac(rk, 'phone', th)) then
+      forget_exchange()
+      return abort(kx.kxId, 'bad recovery')
+    end
+  end
+  start_job('s', kx, {B = reveal.B, th = th})
+end
+
+-- The shared secret is known: the rest of the exchange, a stage a
+-- prerender so none goes past the frame budget: the keys ('keys', e2e.HMACS
+-- HMACs a frame), the key id, safety code and proofs ('proofs'), the keys
+-- in place, the key file, the confirm and the safety code in the log
+-- ('commit'), then the recovery key in the settings ('settle').
+local function finish_stage(j)
+  local s = app.e2e
+  local kx, data = j.kx, j.data
+  if j.stage == 'keys' then
+    local k = j.job:step(e2e.HMACS)
+    if k then j.stage, j.k, j.job = 'proofs', k, STAGE end
+  elseif j.stage == 'proofs' then
+    local th, k = data.th, j.k
+    local rmac
+    if kx.recover then
+      local _, key = recovery()
+      rmac = e2e.b64url(e2e.recover_mac(bytes_of(key, 32), 'addon', th))
+    end
+    j.keys = {keyId = e2e.key_id(th), code = e2e.safety_code(th), lineKey = k.lineKey, lineNonce = k.lineNonce,
+              sendKey = k.sendKey, recoverKey = k.recoverKey, A = kx.A, B = data.B, kxId = kx.kxId,
+              mac = e2e.b64url(e2e.confirm_mac(k.confirmKey, th)), rmac = rmac, acked = false,
+              doneMac = e2e.b64url(e2e.done_mac(k.confirmKey, th))}
+    j.stage = 'commit'
+  elseif j.stage == 'commit' then
+    s.keys = j.keys
+    s.kx, s.reveal = nil, nil
+    write_keyfile()
+    pool:stop()
+    log('encryption on. Safety code: ' .. j.keys.code .. '. The app shows the same code in Settings, under Encryption.')
+    send_confirm()
+    j.stage = 'settle'
+  else
+    s.job = nil
+    local k = j.keys
+    set_recovery(k.keyId, e2e.b64url(k.recoverKey))
+    settings.e2e_account = settings.account_id
+    save()
+  end
+end
+
+local FINISH = {keys = true, proofs = true, commit = true, settle = true}
+
+-- Every prerender: one step of the job, or the pool asked again for a key.
+local function pump_job()
+  local s = app.e2e
+  local j = s.job
+  if not j then return make_key() end
+  if j.stage == 'settle' then return finish_stage(j) end
+  if s.kx ~= j.kx or s.keys then
+    s.job = nil
+    return
+  end
+  if FINISH[j.stage] then return finish_stage(j) end
+  if j.stage == 'save' then
+    write_keyfile()
+    return start_job('A', j.kx)
+  end
+  local result = j.job:step(e2e.STEPS)
+  if result == nil then return end
+  s.job = nil
+  if j.stage == 's' then
+    if not result then
+      forget_exchange()
+      return abort(j.kx.kxId, 'bad key')
+    end
+    s.job = {stage = 'keys', kx = j.kx, data = j.data, job = e2e.derive_job(result, j.data.th)}
+    s.job.job.ladder_done = 255
+    return
+  end
+  j.kx.A = result
+  if s.reveal and s.reveal.kxId == j.kx.kxId then return begin_shared(s.reveal) end
+  send_key(j.kx)
+end
+
+local function on_commit(frame)
+  local s = app.e2e
+  local h = bytes_of(frame.h, 32)
+  if not h or (frame.recover ~= nil and not is_key_id(frame.recover)) then return end
+  if s.keys then return abort(frame.id, 'already set up') end
+  local recover_id = recovery()
+  if recover_id and frame.recover ~= recover_id then return abort(frame.id, 'recovery required', recover_id) end
+  if s.completed >= MAX_EXCHANGES then return abort(frame.id, 'too many') end
+  local kx = s.kx
+  if kx and kx.kxId == frame.id and kx.h == h then -- the same commit again
+    if kx.A then send_key(kx) end
+    return
+  end
+  s.kx, s.job, s.reveal = {kxId = frame.id, id = bytes_of(frame.id, 16), h = h, recover = frame.recover}, nil, nil
+  write_keyfile()
+  make_key()
+end
+
+local function on_reveal(frame)
+  local s = app.e2e
+  if s.keys then
+    if frame.id == s.keys.kxId then return send_confirm() end
+    return abort(frame.id, 'unknown exchange')
+  end
+  local kx = s.kx
+  if not (kx and kx.kxId == frame.id and kx.a) then return abort(frame.id, 'unknown exchange') end
+  if (s.job and s.job.kx == kx and (s.job.stage == 's' or FINISH[s.job.stage])) or s.reveal then return end -- being worked on
+  local B = bytes_of(frame.b, 32)
+  if not B or e2e.commit_hash(kx.id, B) ~= kx.h then
+    forget_exchange()
+    return abort(frame.id, 'commit mismatch')
+  end
+  s.completed = s.completed + 1
+  local reveal = {kxId = frame.id, B = B, rmac = frame.rmac}
+  if kx.A then return begin_shared(reveal) end
+  s.reveal = reveal
+  if not (s.job and s.job.kx == kx) then start_job('A', kx) end
+end
+
+local function on_kx(frame)
+  if not pool or not bytes_of(frame.id, 16) then return end
+  local s, step = app.e2e, frame.step
+  if step == 'commit' then
+    on_commit(frame)
+  elseif step == 'reveal' then
+    on_reveal(frame)
+  elseif step == 'done' then
+    local k = s.keys
+    if k and not k.acked and frame.id == k.kxId and k.doneMac and frame.mac == k.doneMac then
+      k.acked = true
+      write_keyfile()
+    end
+  elseif step == 'abort' then
+    if s.kx and frame.id == s.kx.kxId then forget_exchange() end
+  end
+end
+
+-- On every connect, once the relay says hello: the confirm again until the
+-- phone acknowledged it, or the key again while its reveal has not come.
+local function resend_kx()
+  local s = app.e2e
+  if not pool then return end
+  if s.keys then
+    if not s.keys.acked then send_confirm() end
+  elseif s.kx and s.kx.A then
+    send_key(s.kx)
+  end
+end
+
+-- The socket URL: whether this addon can encrypt, its key id, and the key
+-- id of the recovery key it holds when it has no keys.
+local function socket_url()
+  local url = RELAY_URL .. '/v1/ws?role=addon'
+  if not pool then return url end
+  local s = app.e2e
+  local recover = (not s.keys and recovery()) or ''
+  return url .. '&e2e=1&key=' .. (s.keys and s.keys.keyId or '') .. '&recover=' .. recover
+end
+
+local function encryption_text()
+  local s = app.e2e
+  if not pool then return 'off (not available here)' end
+  if s.keys then return 'on, safety code ' .. s.keys.code end
+  if s.kx then
+    if not s.kx.a and s.waited[s.kx.kxId] then return 'setting up (gathering randomness)' end
+    return 'setting up'
+  end
+  return 'off (waiting for the app; if the app says this addon needs an update, encryption is being blocked)'
+end
+
 -- ls1 and ls2 frames name the shell the game said is in that slot, or null
 -- when it has not said: a line is never named by a guess. Party lines are
 -- group lines like linkshell lines (a sender, a null target) but, like
@@ -243,6 +777,23 @@ local function chat_frame(channel, direction, sender, target, text, ts)
   return encode_fields{{'type', 'chat'}, {'channel', channel}, {'linkshell', linkshell_name(channel, ts)},
                        {'direction', direction}, {'sender', sender}, {'target', target}, {'text', text},
                        {'ts', ts}}
+end
+
+-- The same frame, sealed: no text; the time, then the envelope. The text
+-- gets the relay's rules first; a line with nothing left is dropped (nil).
+local function sealed_frame(line)
+  local text = e2e.clean_text(line.text)
+  local keys = app.e2e.keys
+  if not text or not keys then return nil end
+  local s = app.e2e
+  s.seq = s.seq + 1
+  local sender = line.sender ~= NULL and line.sender or nil
+  local target = line.target ~= NULL and line.target or nil
+  local meta = {key_id = keys.keyId, kind = e2e.kind(line.channel), direction = line.direction, sender = sender, target = target}
+  local envelope = e2e.seal_line(keys, meta, text, line.ts, s.seq)
+  local head = encode_fields{{'type', 'chat'}, {'channel', line.channel}, {'linkshell', linkshell_name(line.channel, line.ts)},
+                             {'direction', line.direction}, {'sender', line.sender}, {'target', line.target}, {'ts', line.ts}}
+  return head:sub(1, -2) .. ',"e2e":' .. envelope .. '}'
 end
 
 -- channel: the slot a linkshell send was typed in, when it is not the one
@@ -277,37 +828,31 @@ end
 -- Just before an update's reload (//vt update, or the one the relay's
 -- refusal starts), and again at the unload of any update's or rollback's
 -- reload, the queue goes to queue.json, through queue.json.tmp and a rename;
--- an empty queue removes it. So the file holds the queue as it is at the
--- last moment. The next load reads it back and deletes it at once
--- (read_queue). This is the only time chat is written to disk.
+-- an empty queue removes it, and any queue.json.tmp a failed rename left, so
+-- no earlier queue is read back and sent twice. So the file holds the queue
+-- as it is at the last moment. The next load reads it back and deletes it at
+-- once (read_queue). This is the only time chat is written to disk.
 local function write_queue()
   if #app.queue == 0 then
     os.remove(QUEUE_FILE)
+    os.remove(QUEUE_FILE .. '.tmp')
     return
   end
   if not windower.dir_exists(DATA_DIR) then pcall(windower.create_dir, DATA_DIR) end
   local frames = {}
   for i, frame in ipairs(app.queue) do frames[i] = json.encode(frame) end
-  local tmp = QUEUE_FILE .. '.tmp'
-  local f = io.open(tmp, 'wb')
-  if not f then return end
-  local ok = f:write('{"v":1,"frames":[' .. table.concat(frames, ',') .. ']}')
-  f:close()
-  os.remove(QUEUE_FILE) -- Windows will not rename onto an existing file
-  if not (ok and os.rename(tmp, QUEUE_FILE)) then os.remove(tmp) end
+  write_through(QUEUE_FILE, '{"v":1,"frames":[' .. table.concat(frames, ',') .. ']}')
 end
 
 -- On load: the queue an update's reload left in queue.json, deleted at once.
 -- At most QUEUE_MAX frames (the newest), and only chat frames; a damaged file
 -- counts as none. They go out, as stored, once the relay says hello.
 local function read_queue()
-  os.remove(QUEUE_FILE .. '.tmp')
-  local f = io.open(QUEUE_FILE, 'rb')
-  if not f then return end
-  local text = f:read('*a')
-  f:close()
+  local text = read_written(QUEUE_FILE)
   os.remove(QUEUE_FILE)
-  local ok, saved = pcall(json.decode, text or '')
+  os.remove(QUEUE_FILE .. '.tmp')
+  if not text then return end
+  local ok, saved = pcall(json.decode, text)
   if not (ok and type(saved) == 'table' and saved.v == 1 and type(saved.frames) == 'table') then return end
   local frames = {}
   for _, frame in ipairs(saved.frames) do
@@ -318,21 +863,53 @@ end
 
 local confirm_lone -- set with the linkshell lookup, below
 
+-- A line on its way: sealed at the start of the next prerender if it was
+-- captured while the keys existed, else in plaintext now, as it was said
+-- unencrypted.
+local function send_line(line)
+  if line.keyed then
+    app.sealing[#app.sealing + 1] = line
+  else
+    deliver(chat_frame(line.channel, line.direction, line.sender, line.target, line.text, line.ts))
+  end
+end
+
+-- At the start of each prerender, before the socket is pumped: the lines
+-- waiting to be sealed, in the order they were captured, until about
+-- SEAL_BUDGET of sealing (always at least one), so a burst spills into the
+-- next frames instead of hitching this one. A single line goes out in the
+-- frame it would have gone in plaintext.
+local function seal_lines()
+  local lines = app.sealing
+  if #lines == 0 then return end
+  local started, done = os.clock(), 0
+  while done < #lines and (done == 0 or os.clock() - started < SEAL_BUDGET) do
+    done = done + 1
+    local frame = sealed_frame(lines[done])
+    if frame then deliver(frame) end
+  end
+  local rest = {}
+  for i = done + 1, #lines do rest[#rest + 1] = lines[i] end
+  app.sealing = rest
+end
+
 -- A captured chat line on its way to the relay. A linkshell line captured
 -- while the game is being asked which shell is in which slot waits up to
 -- LS_LOOKUP_HOLD for the answer, so it is named by it. With one shell
 -- equipped, a linkshell line itself says which slot that shell is in.
 local function relay_line(channel, direction, sender, target, text)
   local ls = app.ls
+  local line = {channel = channel, direction = direction, sender = sender, target = target, text = text,
+                ts = math.floor(now() * 1000), keyed = app.e2e.keys ~= nil}
   if channel == 'ls1' or channel == 'ls2' then
     if not ls.known then confirm_lone(channel) end
     local look = ls.lookup
     if look and now() < look.hold_until and #ls.held < LS_HELD_MAX then
-      ls.held[#ls.held + 1] = {channel, direction, sender, target, text, math.floor(now() * 1000)}
+      ls.held[#ls.held + 1] = line
       return
     end
   end
-  deliver(chat_frame(channel, direction, sender, target, text))
+  send_line(line)
 end
 
 -- Drops expired echo entries; -> the live ones.
@@ -380,49 +957,168 @@ local function slot_name(state, channel)
   return shell and shell.name or nil
 end
 
--- A send frame runs at most one game command per id and is always acked;
--- the relay may replay an id after a reconnect.
--- A linkshell send is for a linkshell, not a slot: the one the relay names
--- (frame.linkshell), else the one this addon last told the relay is in the
--- frame's slot. While the game has not said which shell is in which slot, the
--- send waits for a lookup, and fails if the game still has not said: it is
--- never typed in a slot that is a guess. It is typed in the slot the game
--- said that linkshell is in, and the ack names that slot when it is not the
--- frame's; a linkshell in neither slot fails the send. want: the linkshell,
--- worked out when the frame first arrived (false: not known). looked: a
--- lookup ran for this send already.
-local function handle_send(client, frame, want, looked)
+local REPLAY_WINDOW = 12 * 3600 * 1000 -- ms: a send this far from the PC's clock is too old, and an opened send's record lasts this long
+
+local function now_ms()
+  return math.floor(now() * 1000)
+end
+
+-- Drops replay records 12 hours past the later of typed (or refused) time
+-- and send time.
+local function prune_sent(t)
+  local kept = {}
+  for _, r in ipairs(app.e2e.sent) do
+    if t <= math.max(r.typedAt, r.ts) + REPLAY_WINDOW then kept[#kept + 1] = r end
+  end
+  local changed = #kept ~= #app.e2e.sent
+  app.e2e.sent = kept
+  return changed
+end
+
+local function sent_record(field, value)
+  for _, r in ipairs(app.e2e.sent) do
+    if r[field] == value then return r end
+  end
+  return nil
+end
+
+-- A sealed send with this clientId under another relay id, held for a
+-- linkshell lookup (it has no replay record until it is typed or refused).
+local function held_elsewhere(client_id, id)
+  for _, send in ipairs(app.ls.held_sends) do
+    if send.opened and send.frame.clientId == client_id and send.frame.id ~= id then return true end
+  end
+  return false
+end
+
+-- An opened send's replay record, once it is typed or refused (err): the
+-- same clientId under another relay id is then already sent, and the same
+-- relay id gets the same answer again, so a send refused (not logged in,
+-- say) is never typed later.
+local function record_send(send, err)
+  if not send.opened then return end
+  local t = now_ms()
+  prune_sent(t)
+  app.e2e.sent[#app.e2e.sent + 1] = {clientId = send.frame.clientId, id = send.frame.id, typedAt = t, ts = send.opened.ts,
+                                     error = err}
+  write_keyfile()
+end
+
+-- A send runs at most one game command per id and is always acked; the
+-- relay may replay an id after a reconnect. send = {frame =, text =, want =,
+-- opened =}: the frame, the text to type (the opened payload's, or the
+-- frame's plaintext), and for a sealed send its payload and destination.
+-- A linkshell send is for a linkshell, not a slot: the one a sealed send's
+-- payload names (ls:<Name>), else the one the relay names (frame.linkshell),
+-- else the one this addon last told the relay is in the frame's slot; a
+-- send to a slot (slot:N, or one that names none) is for that slot. While
+-- the game has not said which shell is in which slot, the send waits for a
+-- lookup, and fails if the game still has not said: it is never typed in a
+-- slot that is a guess. It is typed in the slot the game said that linkshell
+-- is in, and the ack names that slot when it is not the frame's; a
+-- linkshell in neither slot fails the send. want: the linkshell (false: the
+-- frame's slot), worked out when the frame first arrived. looked: a lookup
+-- ran for this send already.
+local function type_send(client, send, looked)
+  local frame = send.frame
   local id = frame.id
-  if not is_send_id(id) then return end
   if app.executed[id] then return ack(client, id, true) end
-  if not windower.ffxi.get_player() then return ack(client, id, false, 'not logged in') end
+  local done = send.opened and sent_record('id', id)
+  if done then return ack(client, id, done.error == nil, done.error) end
+  local function refuse(err)
+    record_send(send, err)
+    return ack(client, id, false, err)
+  end
+  if not windower.ffxi.get_player() then return refuse('not logged in') end
   local channel = frame.channel
-  local command, text = chat.validate_send(channel, frame.target, frame.text)
-  if not command then return ack(client, id, false, text) end
+  local command, text = chat.validate_send(channel, frame.target, send.text)
+  if not command then return refuse(text) end
   if channel == 'ls1' or channel == 'ls2' then
     local ls = app.ls
-    if want == nil then want = is_set(frame.linkshell) and frame.linkshell or slot_name(ls.sent, channel) or false end
+    if send.want == nil then send.want = is_set(frame.linkshell) and frame.linkshell or slot_name(ls.sent, channel) or false end
+    local want = send.want
     -- A send that names no linkshell is for the slot it gives.
     if want then
       if ls.lookup or (not ls.known and not looked and lookup_for_send()) then
-        ls.held_sends[#ls.held_sends + 1] = {frame = frame, want = want}
+        ls.held_sends[#ls.held_sends + 1] = send
         return
       end
-      if not ls.known then return ack(client, id, false, 'linkshell slot not known') end
+      if not ls.known then return refuse('linkshell slot not known') end
       if slot_name(ls.current, channel) ~= want then
         channel = OTHER_SLOT[channel]
-        if slot_name(ls.current, channel) ~= want then return ack(client, id, false, 'linkshell not equipped') end
-        command, text = chat.validate_send(channel, frame.target, frame.text)
+        if slot_name(ls.current, channel) ~= want then return refuse('linkshell not equipped') end
+        command, text = chat.validate_send(channel, frame.target, send.text)
       end
     end
   end
   windower.send_command(command)
   remember_executed(id)
+  record_send(send)
   local t = now()
   local echoes = live_echoes(t)
   echoes[#echoes + 1] = {channel = channel, target = channel == 'tell' and frame.target:lower() or nil,
                          text = text, expires = t + ECHO_WINDOW}
   ack(client, id, true, nil, channel ~= frame.channel and channel or nil)
+end
+
+-- A sealed send's destination against its frame: '' for a tell or party;
+-- ls:<Name> or slot:1 or slot:2 for a linkshell. -> the linkshell wanted
+-- (false: the frame's slot) | nil, the error.
+local function destination(frame, to)
+  local kind = e2e.kind(frame.channel)
+  if kind ~= 'ls' then
+    if to ~= '' then return nil, 'bad destination' end
+    return false
+  end
+  local name = to:match('^ls:(.+)$')
+  if name then
+    if is_set(frame.linkshell) and frame.linkshell ~= name then return nil, 'linkshell mismatch' end
+    return name
+  end
+  local slot = to:match('^slot:([12])$')
+  if not slot then return nil, 'bad destination' end
+  if frame.channel ~= 'ls' .. slot then return nil, 'linkshell mismatch' end
+  return false
+end
+
+-- A send frame as it arrives, before it may wait for a linkshell lookup:
+-- with keys, it must be sealed under them, for the destination the frame
+-- has, not typed before nor held under another relay id, and not more than
+-- 12 hours from this PC's clock;
+-- without keys, it must be plaintext. The decision stands for a send held
+-- for a lookup, whatever happens to the keys meanwhile.
+local function handle_send(client, frame)
+  local id = frame.id
+  if not is_send_id(id) then return end
+  if app.executed[id] then return ack(client, id, true) end
+  local done = sent_record('id', id)
+  if done then return ack(client, id, done.error == nil, done.error) end
+  local keys = app.e2e.keys
+  local send = {frame = frame, text = frame.text}
+  if keys then
+    if frame.e2e == nil then return ack(client, id, false, 'not encrypted') end
+    app.opened = app.opened + 1
+    local opened, err = e2e.open_send(keys, frame)
+    if not opened then return ack(client, id, false, err) end
+    local want
+    want, err = destination(frame, opened.to)
+    if want == nil then return ack(client, id, false, err) end
+    local t = now_ms()
+    if prune_sent(t) then write_keyfile() end
+    if sent_record('clientId', frame.clientId) or held_elsewhere(frame.clientId, id) then
+      return ack(client, id, false, 'already sent')
+    end
+    if math.abs(opened.ts - t) > REPLAY_WINDOW then return ack(client, id, false, 'too old') end
+    -- A send the phone sealed under these keys: it holds them, as done would say.
+    if not keys.acked then
+      keys.acked = true
+      write_keyfile()
+    end
+    send.text, send.want, send.opened = opened.t, want, opened
+  elseif frame.e2e ~= nil then
+    return ack(client, id, false, 'could not decrypt')
+  end
+  type_send(client, send)
 end
 
 ---------------------------------------------------------------------------
@@ -581,7 +1277,7 @@ local function release_lines()
   local ls = app.ls
   local held = ls.held
   ls.held = {}
-  for _, line in ipairs(held) do deliver(chat_frame(line[1], line[2], line[3], line[4], line[5], line[6])) end
+  for _, line in ipairs(held) do send_line(line) end
 end
 
 -- The sends that waited for the lookup.
@@ -590,7 +1286,7 @@ local function release_sends()
   local sends = ls.held_sends
   ls.held_sends = {}
   if app.state == 'open' and app.client then
-    for _, send in ipairs(sends) do handle_send(app.client, send.frame, send.want, true) end
+    for _, send in ipairs(sends) do type_send(app.client, send, true) end
   end
 end
 
@@ -749,6 +1445,7 @@ local function on_hello(client)
   for _, frame in ipairs(queue) do client:send_text(frame) end
   local t = now()
   app.state = 'open'
+  resend_kx()
   app.last_rx, app.last_ping, app.opened_at = t, t, t
   if app.outage_said then
     log('reconnected to relay')
@@ -771,9 +1468,16 @@ local function on_message(client, text)
   if not (ok and type(frame) == 'table') then return end
   if hooks.on_frame then hooks.on_frame(frame) end
   if frame.type == 'hello' then
+    -- The relay says this account has switched to encryption.
+    if frame.switched == 1 and is_account_id(settings.account_id) and settings.e2e_account ~= settings.account_id then
+      settings.e2e_account = settings.account_id
+      save()
+    end
     on_hello(client)
   elseif frame.type == 'send' then
     handle_send(client, frame)
+  elseif frame.type == 'kx' then
+    on_kx(frame)
   end
 end
 
@@ -794,6 +1498,18 @@ end
 -- outage counts as said, so no connection lost line), and updates itself
 -- from vanatell.com as //vt update does, at most once in AUTO_UPDATE_GAP.
 local function refused(reason)
+  -- This version has encryption, but this Lua cannot run it: it is the
+  -- newest there is and can never be let in, so it stops until //vt on or a
+  -- reload.
+  if not pool then
+    app.state, app.opened_at, app.last_error = 'stopped', nil, reason
+    app.outage, app.outage_since, app.outage_said = false, nil, false
+    if not app.no_bit_said then
+      app.no_bit_said = true
+      log("encryption is on for this account and can't run on this PC (no bit library)")
+    end
+    return
+  end
   schedule_retry(reason)
   app.outage_said = true
   local t = now()
@@ -827,7 +1543,7 @@ end
 
 local function connect()
   local client = ws.new{
-    url = RELAY_URL .. '/v1/ws?role=addon',
+    url = socket_url(),
     headers = {{'Authorization', 'Bearer ' .. settings.token}},
     cafile = CA_FILE,
     on_open = on_open,
@@ -879,7 +1595,11 @@ local function paired(body)
   end
   settings.token = reply.addonToken
   settings.account_id = reply.accountId
+  if settings.e2e_account ~= reply.accountId then settings.e2e_account = '' end
   save()
+  -- Only now, with the new token saved: a mistyped or expired code never
+  -- leaves a working pairing without its keys.
+  delete_keys()
   log('paired (account ' .. reply.accountId .. ')')
   drop_client(1000, 're-paired')
   start()
@@ -929,7 +1649,8 @@ local function show_help()
 end
 
 local CONNECTION_TEXT = {open = 'connected', connecting = 'connecting', unpaired = 'not paired',
-                         disabled = 'off', unauthorized = 'token rejected, pair again'}
+                         disabled = 'off', unauthorized = 'token rejected, pair again',
+                         stopped = "stopped (encryption is on for this account and can't run on this PC)"}
 
 local function connection_text()
   if app.state ~= 'waiting' then return CONNECTION_TEXT[app.state] end
@@ -999,6 +1720,7 @@ function commands.status()
   log('connection: ' .. connection_text())
   log('queued: ' .. #app.queue)
   log('linkshells: ' .. linkshells_text())
+  log('encryption: ' .. encryption_text())
 end
 
 function commands.on()
@@ -1020,7 +1742,8 @@ function commands.unpair()
   cancel_pairing()
   settings.token = ''
   settings.account_id = ''
-  save()
+  settings.e2e_account = ''
+  delete_keys()
   drop_client(1000, 'unpaired')
   app.queue = {}
   app.queue_full = false
@@ -1047,6 +1770,10 @@ windower.register_event('load', function()
   pcall(console, 'VanaTell ' .. _addon.version .. ' loaded')
   updater:on_load()
   read_queue()
+  load_keys()
+  harvest()
+  local s = app.e2e
+  if pool and s.kx and s.kx.a and not s.keys then start_job('A', s.kx) end -- to answer the commit again
   start()
 end)
 
@@ -1060,22 +1787,35 @@ windower.register_event('unload', function()
     if update.newer(QUEUE_SINCE, updater.reload_version) then os.remove(QUEUE_FILE) else write_queue() end
   end
   updater:on_unload()
+  if pool then pool:on_unload() end
   local client = app.client
   app.client = nil
   if client then client:abort() end
 end)
 
+-- The socket's frames this prerender: up to MAX_FRAMES, and none past the
+-- OPENS_MAX-th sealed send opened.
+local function open_more()
+  return app.opened < OPENS_MAX
+end
+
 windower.register_event('prerender', function()
+  seal_lines()
   if app.pairing then app.pairing:pump() end
   updater:pump()
   local t = now()
+  if pool then
+    pool:pump(t)
+    pump_job()
+  end
   if app.outage and not app.outage_said and (app.state == 'waiting' or app.state == 'connecting')
       and t - app.outage_since >= QUIET_DROP then
     app.outage_said = true
     log('connection lost (' .. tostring(app.last_error) .. '), retrying')
   end
   if app.state == 'waiting' and t >= app.next_attempt then connect() end
-  if app.client then app.client:pump(MAX_FRAMES) end
+  app.opened = 0
+  if app.client then app.client:pump(MAX_FRAMES, open_more) end
   -- From the upgrade on, whether or not the relay has said hello.
   if app.client and app.last_rx then
     if t - app.last_rx >= IDLE_TIMEOUT then

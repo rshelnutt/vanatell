@@ -44,9 +44,20 @@ Say, shout, yell, emotes and system messages stay in game.
 - **Only chat leaves the game.** Tells, party and both linkshells. Never say, shout or yell, your inventory, gil or position, and nothing from your Square Enix account.
 - **Never writes packets.** The addon never writes or injects game packets. It reads chat, and from your phone it can only type `/tell`, `/p`, `/l` and `/l2`, the way you would at the keyboard.
 - **Encrypted in transit and at rest.** Every connection uses TLS, and the addon checks the server's certificate itself against `relay-roots.txt`. Stored lines are encrypted on Cloudflare's network.
-- **Little kept, deleted on request.** The server keeps the newest 2,000 lines per account so your phone can catch up. **Unpair this phone** in the app deletes your account and everything stored, at once.
+- **Little kept, deleted on request.** The server keeps the newest 2,000 lines per account so your phone can catch up. **Unpair this phone** in the app deletes your account and everything stored, at once, though for 30 days a copy still exists in Cloudflare's point-in-time recovery of the relay's storage, which the relay cannot erase.
 - **No tracking.** No analytics, ads, trackers or third-party SDKs, in the addon or the apps.
-- **Read it yourself.** Every line of this addon is here in plain Lua. `//vt update` checks each file's SHA-256 against the published list before installing it.
+- **Read it yourself.** Every line of this addon is here in plain Lua. `//vt update` checks each file's SHA-256 against the published list before installing it. An update the addon makes by itself when the relay requires one is checked the same way.
+- **Your chat text is encrypted.** When both the addon and the app are updated, the addon encrypts the text of every tell, party and linkshell line on your PC before it leaves, and only your phone can decrypt it; what you type on the phone is encrypted on the phone, and only the addon can decrypt it. `//vt status` (on Ashita, `/vt status`) shows `encryption: on` when it is. Compare the safety code once (below): until you do, a relay could have put itself in the middle when encryption was set up, and the points below that say "only" depend on that check.
+- **The keys stay on your PC and your phone.** Each side makes its own key; only the public halves cross the relay. On Ashita the addon's key comes from Windows' system random generator. On Windower, which gives addons no system random source, the addon makes it from the timing of its own frames against your PC's clock and from the timing and content of the game's traffic and your mouse and keyboard input, none of which reaches the relay, and stops once encryption is on.
+- **Check that no one is in between.** `//vt status` (on Ashita, `/vt status`) shows a safety code, and the app shows one in **Settings → Encryption**. If they match, your PC and phone are talking only to each other. The keys change when you pair again, or when the addon replaces a lost key file using the recovery key it keeps with its pairing; the app then says the safety code changed. After you pair again, compare the new code: the app sets up encryption on the relay's report that you paired, so a relay could report a pairing you did not make. If it did, the app's code changes while the code in game stays the same.
+- **Encryption can be held back, but not faked.** Until it turns on, and again after you pair again until it turns on again, the relay could keep it from turning on. If the app says your addon needs an update, or says it is still setting up, while `//vt status` (on Ashita, `/vt status`) says it is waiting for the app, encryption is being blocked.
+- **Older lines are replaced, not left readable.** Once encryption is on, your phone replaces every line the relay still holds readable with an encrypted copy, in place, at the same time and in the same conversation, so your history reads as it did. Lines that pass through while a new pairing is being set up are replaced the same way. Cloudflare keeps point-in-time recovery of the relay's storage for 30 days, and the relay cannot erase it: for 30 days after a line is replaced, its readable copy still exists in that recovery data.
+- **Moving to a new phone.** In the app, **Settings → Encryption** shows a restore key, with Copy and Download. On a new phone, after setting up and pairing as usual, **Restore from restore key** moves your old account's stored messages, the newest 2,000 lines, into the new account and lets it read them; the old account is then deleted. Keep this key secure. Anyone with it can restore your messages. We can't recover it if it's lost. The relay keeps only a copy of your keys sealed under the key, which it cannot open.
+- **See what the relay holds.** In the app, **Settings → Encryption → See what the server holds** shows your newest stored lines exactly as the relay returns them.
+- **After you have compared the codes, the relay can't type for you.** The addon then types only what your phone encrypted, and each of those only once.
+- **Updates.** Once encryption is on for your account, the relay turns away a version of the addon without encryption. A version that can update itself then does so from vanatell.com, checking every file's size and SHA-256 as `//vt update` does; an older one tells you to type `//vt update`. Otherwise the addon updates only when you type `//vt update`.
+- **What the relay still sees.** Who each line is from and to, the channel, whether it came in or went out, the linkshell's name and the times. It needs them to file lines under the right linkshell, apply your mutes and send your replies to the right place.
+- **What we can't prove.** The apps hold the keys and their source is not published, so you are trusting them with the keys. On iPhone, notification text is decrypted on the phone by the app's notification extension.
 
 The full detail: [What is sent and what is not](#what-is-sent-and-what-is-not), and [vanatell.com/privacy](https://vanatell.com/privacy).
 
@@ -99,6 +110,8 @@ On Ashita the line says `/vt pair <code>`, with one slash.
 2. In game, type `//vt pair CODE` (on Ashita, `/vt pair CODE`) with the code from the app in place of `CODE`. Upper or lower case both work.
 3. The game log shows `vanatell: paired (account ...)`, then `vanatell: connected to relay`. You're done.
 
+Once the app is updated too, encryption sets itself up within a few seconds, with nothing to tap or type. The game log then says `VanaTell: encryption on. Safety code: ...`, and `//vt status` (on Ashita, `/vt status`) shows the same code as the app's **Settings → Encryption**.
+
 To pair again later, open **Settings** in the app and tap **Generate new pairing code**.
 
 ## Commands
@@ -122,6 +135,7 @@ VanaTell: enabled: yes
 VanaTell: connection: connected
 VanaTell: queued: 0
 VanaTell: linkshells: 1=KupoKnights 2=(none)
+VanaTell: encryption: on, safety code 1234 5678 9012
 ```
 
 ## Updating
@@ -132,7 +146,7 @@ Each time it loads, the addon asks vanatell.com once for the newest version numb
 
 The addon also updates itself when the relay requires it. If the relay refuses this version, the addon says `VanaTell: encryption is on for this account; updating to the newest version` and runs the same update as `//vt update`, with every check it makes, at most once every 10 minutes. Lines said meanwhile are kept and sent once it reconnects. With `//vt off` (`/vt off`) the addon does not connect, so it never updates by itself.
 
-`//vt rollback` (`/vt rollback`) puts back the files the last update replaced and reloads. Lines waiting to be sent are kept across the reload when the version it goes back to is this one or newer.
+`//vt rollback` (`/vt rollback`) puts back the files the last update replaced and reloads. Lines waiting to be sent are kept across the reload when the version it goes back to is this one or newer. Once encryption is on for your account, it will not go back to a version without encryption.
 
 To update by hand instead, download the zip from [Releases](../../releases) as in Install.
 
@@ -140,7 +154,7 @@ To update by hand instead, download the zip from [Releases](../../releases) as i
 
 **Sent to the relay**
 
-- Each tell, party, LS1 and LS2 line: the channel, whether it came in or went out, who sent it, the tell target, the text, the time, and for linkshell lines the name of that linkshell.
+- Each tell, party, LS1 and LS2 line: the channel, whether it came in or went out, who sent it, the tell target, the text, the time, and for linkshell lines the name of that linkshell. Once encryption is on, the text is encrypted on your PC and the relay cannot read it; the rest stays readable so the relay can file and route the line.
 - The names and colours of the linkshells equipped in slots 1 and 2, when they change.
 - A keepalive every 30 seconds.
 
@@ -162,6 +176,8 @@ To update by hand instead, download the zip from [Releases](../../releases) as i
 
 - `addons/vanatell/data/settings.xml` holds this PC's pairing token in plain text. Treat it like a password. `//vt unpair` wipes the token.
 - On Ashita that file is `config/addons/vanatell/settings.json` in the Ashita folder, shared by all your characters. Treat it like a password too. `/vt unpair` wipes the token.
+- `addons/vanatell/data/e2e.json` (on Ashita, `config/addons/vanatell/e2e.json`) holds this pairing's encryption keys. Treat it like a password. `//vt unpair` wipes it. The settings file also keeps a recovery key, so a lost `e2e.json` can be replaced without pairing again.
+- `entropy.seed`, next to it, holds only a hash used to make future keys quickly.
 - Lines that arrive while the relay is out of reach wait in memory, up to 500. They are written to disk only for the seconds the reload of an update or a rollback takes, in `addons/vanatell/data/queue.json` (on Ashita, `config/addons/vanatell/queue.json`), then read back and deleted.
 
 Everything travels over an encrypted connection, and the addon checks the relay's certificate, and vanatell.com's for updates, against the small list of trust roots in `relay-roots.txt`. That file is not a certificate to install; it is only read by the addon.

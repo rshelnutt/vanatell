@@ -36,6 +36,17 @@ The zips, as the tool builds them:
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-11-17
+
+### Added
+
+- Encryption of every line's text: tells, party and linkshell lines are encrypted on your PC before they leave, and
+  what the phone sends is opened only here. It sets itself up once the app is updated too, in a few seconds, with
+  nothing to type. Who, when, the channel and the linkshell name stay readable to the relay so it can route lines.
+- `//vt status` (on Ashita, `/vt status`) shows the safety code; the app shows the same code in Settings, Encryption.
+- A recovery key kept with the pairing, so a lost key file is replaced without pairing again.
+- Once encryption is on for your account, `//vt rollback` will not go back to a version without encryption.
+
 ## [0.3.9] - 2026-11-16
 
 ### Added
@@ -226,7 +237,8 @@ The zips, as the tool builds them:
 - Case-insensitive pair codes: upper or lower case both work, and dashes or
   spaces copied from the phone are ignored.
 
-[Unreleased]: https://github.com/rshelnutt/vanatell/compare/v0.3.9...HEAD
+[Unreleased]: https://github.com/rshelnutt/vanatell/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/rshelnutt/vanatell/compare/v0.3.9...v0.4.0
 [0.3.9]: https://github.com/rshelnutt/vanatell/compare/v0.3.8...v0.3.9
 [0.3.8]: https://github.com/rshelnutt/vanatell/compare/v0.3.7...v0.3.8
 [0.3.7]: https://github.com/rshelnutt/vanatell/compare/v0.3.6...v0.3.7

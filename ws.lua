@@ -761,10 +761,12 @@ local function dispatch(self, frame)
 end
 
 -- Decodes and dispatches up to max_frames frames from rx, stopping once the
--- connection ends. -> count, drained (true when rx holds no complete frame)
-local function process_frames(self, max_frames)
+-- connection ends, or once more (when given) says false before a frame; the
+-- rest wait in rx for the next pump. -> count, drained (true when rx holds
+-- no complete frame)
+local function process_frames(self, max_frames, more)
   local stream, count = self.stream, 0
-  while count < max_frames and is_live(self) do
+  while count < max_frames and is_live(self) and (not more or more()) do
     local frame, consumed = ws._decode_frame(stream.rx, self.max_message)
     if frame == nil then return count, true end
     if not frame then
@@ -779,10 +781,10 @@ local function process_frames(self, max_frames)
 end
 
 -- Open or closing: one read, up to max_frames frames, one flush.
-local function pump_open(self, max_frames)
+local function pump_open(self, max_frames, more)
   local stream = self.stream
   local read_ok, read_err = stream:read()
-  local count, drained = process_frames(self, max_frames)
+  local count, drained = process_frames(self, max_frames, more)
   if not is_live(self) then return count end
   if not read_ok then
     close_abnormally(self, io_error(read_err))
@@ -834,7 +836,7 @@ function Client:abort()
   end
 end
 
-local function pump_connecting(self, max_frames)
+local function pump_connecting(self, max_frames, more)
   local stream = self.stream
   if not self.key then
     local status, err = stream:advance()
@@ -863,7 +865,7 @@ local function pump_connecting(self, max_frames)
     if upgraded then
       self.state = 'open'
       emit(self, 'on_open')
-      return (process_frames(self, max_frames))
+      return (process_frames(self, max_frames, more))
     end
     if stream.eof then
       close_abnormally(self, 'connection lost')
@@ -878,11 +880,12 @@ local function pump_connecting(self, max_frames)
   return 0
 end
 
--- Bounded work per call -> number of frames decoded.
-function Client:pump(max_frames)
+-- Bounded work per call -> number of frames decoded. more: when given,
+-- asked before each frame; false leaves the rest for the next pump.
+function Client:pump(max_frames, more)
   max_frames = max_frames or DEFAULT_MAX_FRAMES
-  if self.state == 'connecting' then return pump_connecting(self, max_frames) end
-  if is_live(self) then return pump_open(self, max_frames) end
+  if self.state == 'connecting' then return pump_connecting(self, max_frames, more) end
+  if is_live(self) then return pump_open(self, max_frames, more) end
   return 0
 end
 

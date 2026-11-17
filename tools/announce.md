@@ -1,3 +1,2 @@
-0.3.9
-- The addon now updates itself when VanaTell needs a newer version.
-- Lines waiting to be sent are kept across //vt update (on Ashita, /vt update).
+0.4.0
+- Chat text is now encrypted on your PC before it leaves, once the app is updated too. //vt status shows the safety code (/vt on Ashita).
