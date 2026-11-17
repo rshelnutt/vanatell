@@ -83,10 +83,15 @@ local UPDATE_URL = 'https://vanatell.com/addon/latest.json'
 -- Every install talks to the one VanaTell relay; it cannot be changed. A relay address saved by an older version is
 -- dropped. (Tests put a stand-in relay in __vanatell_test.)
 local RELAY_URL = hooks.relay_url or 'wss://relay.vanatell.com'
--- recover_key and recover_key_id: the recovery key of this pairing's keys
--- and their key id, kept beside the token so a lost key file is recovered
--- by itself. e2e_account: the account this PC knows has switched to
--- encryption (rollbacks below encryption are refused for it).
+-- recover_key: the key id of this pairing's keys and their recovery key,
+-- '<key id>:<key>', kept beside the token so a lost key file is recovered by
+-- itself. It is one string with a ':' because Windower's config library
+-- reads back a value that looks like a number as a number, and a key id
+-- alone (16 hex digits) can look like one. recover_key_id: where the key id
+-- was kept on its own before; still read, and emptied whenever the recovery
+-- key is written.
+-- e2e_account: the account this PC knows has switched to encryption
+-- (rollbacks below encryption are refused for it).
 local settings = config.load({token = '', account_id = '', enabled = true, ls_slots = '', recover_key = '',
                               recover_key_id = '', e2e_account = ''})
 for _, key in ipairs({'ls_slots', 'recover_key', 'recover_key_id', 'e2e_account'}) do
@@ -267,6 +272,22 @@ local function is_key_id(v)
   return type(v) == 'string' and #v == 16 and v:find('^[0-9a-f]+$') ~= nil
 end
 
+-- The recovery key in the settings -> its key id, the key (b64url) | nil.
+-- '<key id>:<key>' in recover_key, or the earlier form, the key id in
+-- recover_key_id.
+local function recovery()
+  local id, key = settings.recover_key:match('^(%x+):(.+)$')
+  if not id then id, key = settings.recover_key_id, settings.recover_key end
+  if is_key_id(id) and bytes_of(key, 32) then return id, key end
+  return nil
+end
+
+-- id, key (b64url), or nothing to clear it.
+local function set_recovery(id, key)
+  settings.recover_key = id and (id .. ':' .. key) or ''
+  settings.recover_key_id = ''
+end
+
 local KEY_BYTES = {'lineKey', 'lineNonce', 'sendKey', 'recoverKey', 'A', 'B'}
 
 -- The file's keys -> in memory: the 32-byte keys raw, the rest as written.
@@ -408,8 +429,8 @@ local function load_keys()
   local k = s.keys
   if k then
     local recover_key = e2e.b64url(k.recoverKey)
-    if settings.recover_key ~= recover_key or settings.recover_key_id ~= k.keyId then
-      settings.recover_key, settings.recover_key_id = recover_key, k.keyId
+    if settings.recover_key ~= k.keyId .. ':' .. recover_key or settings.recover_key_id ~= '' then
+      set_recovery(k.keyId, recover_key)
       save()
     end
   end
@@ -459,7 +480,7 @@ local function delete_keys()
   app.sealing = {} -- captured under keys that are gone
   os.remove(KEY_FILE)
   os.remove(KEY_FILE .. '.tmp')
-  settings.recover_key, settings.recover_key_id = '', ''
+  set_recovery()
   save()
   harvest()
 end
@@ -496,10 +517,6 @@ end
 local function send_confirm()
   local k = app.e2e.keys
   send_kx{{'step', 'confirm'}, {'id', k.kxId}, {'key', k.keyId}, {'mac', k.mac}, {'rmac', k.rmac}}
-end
-
-local function has_recovery_key()
-  return is_key_id(settings.recover_key_id) and bytes_of(settings.recover_key, 32) ~= nil
 end
 
 -- stage 'A': a·G, the addon's public key; stage 's': a·B, the shared secret.
@@ -539,8 +556,9 @@ local function begin_shared(reveal)
   s.reveal = nil
   local th = e2e.transcript(settings.account_id, kx.id, kx.A, reveal.B)
   if kx.recover then
-    local rk, rmac = bytes_of(settings.recover_key, 32), bytes_of(reveal.rmac, 16)
-    if not (rk and rmac and kx.recover == settings.recover_key_id and rmac == e2e.recover_mac(rk, 'phone', th)) then
+    local id, key = recovery()
+    local rk, rmac = bytes_of(key, 32), bytes_of(reveal.rmac, 16)
+    if not (rk and rmac and kx.recover == id and rmac == e2e.recover_mac(rk, 'phone', th)) then
       forget_exchange()
       return abort(kx.kxId, 'bad recovery')
     end
@@ -560,13 +578,16 @@ local function finish_exchange(kx, data, shared)
   local k = e2e.derive(shared, th)
   local key_id, code = e2e.key_id(th), e2e.safety_code(th)
   local rmac
-  if kx.recover then rmac = e2e.b64url(e2e.recover_mac(bytes_of(settings.recover_key, 32), 'addon', th)) end
+  if kx.recover then
+    local _, key = recovery()
+    rmac = e2e.b64url(e2e.recover_mac(bytes_of(key, 32), 'addon', th))
+  end
   s.keys = {keyId = key_id, code = code, lineKey = k.lineKey, lineNonce = k.lineNonce, sendKey = k.sendKey,
             recoverKey = k.recoverKey, A = kx.A, B = data.B, kxId = kx.kxId, mac = e2e.b64url(e2e.confirm_mac(k.confirmKey, th)),
             rmac = rmac, acked = false, doneMac = e2e.b64url(e2e.done_mac(k.confirmKey, th))}
   s.kx, s.reveal = nil, nil
   write_keyfile()
-  settings.recover_key, settings.recover_key_id = e2e.b64url(k.recoverKey), key_id
+  set_recovery(key_id, e2e.b64url(k.recoverKey))
   settings.e2e_account = settings.account_id
   save()
   pool:stop()
@@ -597,9 +618,8 @@ local function on_commit(frame)
   local h = bytes_of(frame.h, 32)
   if not h or (frame.recover ~= nil and not is_key_id(frame.recover)) then return end
   if s.keys then return abort(frame.id, 'already set up') end
-  if has_recovery_key() and frame.recover ~= settings.recover_key_id then
-    return abort(frame.id, 'recovery required', settings.recover_key_id)
-  end
+  local recover_id = recovery()
+  if recover_id and frame.recover ~= recover_id then return abort(frame.id, 'recovery required', recover_id) end
   if s.completed >= MAX_EXCHANGES then return abort(frame.id, 'too many') end
   local kx = s.kx
   if kx and kx.kxId == frame.id and kx.h == h then -- the same commit again
@@ -668,7 +688,7 @@ local function socket_url()
   local url = RELAY_URL .. '/v1/ws?role=addon'
   if not pool then return url end
   local s = app.e2e
-  local recover = (not s.keys and has_recovery_key()) and settings.recover_key_id or ''
+  local recover = (not s.keys and recovery()) or ''
   return url .. '&e2e=1&key=' .. (s.keys and s.keys.keyId or '') .. '&recover=' .. recover
 end
 
