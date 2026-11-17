@@ -193,13 +193,30 @@ function Pool:take()
   return out
 end
 
+-- Before path.tmp is opened for a write, which empties it: a path.tmp that
+-- a failed rename left as the only copy is put in place. -> false while it
+-- cannot be (it is then left as it is)
+local function tmp_in_place(path, tmp)
+  local f = io.open(path, 'rb')
+  if f then
+    f:close()
+    return true
+  end
+  f = io.open(tmp, 'rb')
+  if not f then return true end
+  f:close()
+  return os.rename(tmp, path) and true or false
+end
+
 -- entropy.seed, through entropy.seed.tmp and a rename. A failed write leaves
 -- the seed as it was; a failed rename leaves entropy.seed.tmp, which the
--- next start reads.
+-- next start reads and the next write puts in place first (while it cannot,
+-- nothing is written, so that copy is never emptied).
 function Pool:write_seed()
   local seed = self:hash(self.P .. 'seed'):gsub('.', function(c) return string.format('%02x', c:byte()) end)
   local text = '{"v":1,"seed":"' .. seed .. '","ready":' .. tostring(self.seed_ready) .. '}'
   local tmp = self.seed_path .. '.tmp'
+  if not tmp_in_place(self.seed_path, tmp) then return end
   local f = io.open(tmp, 'wb')
   if not f then return end
   local ok = f:write(text)

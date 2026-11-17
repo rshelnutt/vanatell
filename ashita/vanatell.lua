@@ -255,11 +255,28 @@ function config.load(path, defaults)
   return settings
 end
 
+-- Before settings.json.tmp is opened for a save, which empties it: one that
+-- a failed rename left as the only copy is put in place. -> false while it
+-- cannot be (it is then left as it is)
+local function tmp_in_place(path, tmp)
+  local f = io.open(path, 'rb')
+  if f then
+    f:close()
+    return true
+  end
+  f = io.open(tmp, 'rb')
+  if not f then return true end
+  f:close()
+  return os.rename(tmp, path) and true or false
+end
+
 -- Every save is for all characters: there is one file per Ashita folder.
 -- It goes to settings.json.tmp first, then is renamed over settings.json
 -- (Windows will not rename onto an existing file, so that goes first), so
 -- the token and the recovery key are never left half written. A failed
--- rename leaves settings.json.tmp, which the next load takes.
+-- rename leaves settings.json.tmp, which the next load takes and the next
+-- save puts in place first (while it cannot, nothing is saved, so that copy
+-- is never emptied).
 function config.save(settings)
   local keys = {}
   for k, v in pairs(settings) do
@@ -272,14 +289,16 @@ function config.save(settings)
   local mkdir = ashita.fs.create_directory or ashita.fs.create_dir
   if not ashita.fs.exists(SETTINGS_DIR) then mkdir(SETTINGS_DIR) end
   local tmp = SETTINGS_FILE .. '.tmp'
-  local f = io.open(tmp, 'wb')
-  local written = f and f:write('{' .. table.concat(parts, ',') .. '}\n')
-  if f then f:close() end
-  if written then
-    os.remove(SETTINGS_FILE)
-    if os.rename(tmp, SETTINGS_FILE) then return true end
-  else
-    os.remove(tmp)
+  if tmp_in_place(SETTINGS_FILE, tmp) then
+    local f = io.open(tmp, 'wb')
+    local written = f and f:write('{' .. table.concat(parts, ',') .. '}\n')
+    if f then f:close() end
+    if written then
+      os.remove(SETTINGS_FILE)
+      if os.rename(tmp, SETTINGS_FILE) then return true end
+    else
+      os.remove(tmp)
+    end
   end
   add_to_chat(207, 'VanaTell: could not save settings to config/addons/vanatell/settings.json')
   return false
