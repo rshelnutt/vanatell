@@ -36,6 +36,12 @@ The zips, as the tool builds them:
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-11-17
+
+### Changed
+
+- The game log says device, not phone: `//vt help` and the line after an account is deleted.
+
 ## [0.4.0] - 2026-11-17
 
 ### Added
@@ -237,7 +243,8 @@ The zips, as the tool builds them:
 - Case-insensitive pair codes: upper or lower case both work, and dashes or
   spaces copied from the phone are ignored.
 
-[Unreleased]: https://github.com/rshelnutt/vanatell/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/rshelnutt/vanatell/compare/v0.4.1...HEAD
+[0.4.1]: https://github.com/rshelnutt/vanatell/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/rshelnutt/vanatell/compare/v0.3.9...v0.4.0
 [0.3.9]: https://github.com/rshelnutt/vanatell/compare/v0.3.8...v0.3.9
 [0.3.8]: https://github.com/rshelnutt/vanatell/compare/v0.3.7...v0.3.8

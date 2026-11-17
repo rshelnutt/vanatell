@@ -40,7 +40,7 @@
 set -euo pipefail
 
 usage() {
-  echo "usage: tools/release.sh vX.Y.Z [--local STATE] [--out DIR]" >&2
+  echo "usage: tools/release.sh vX.Y.Z [--local STATE] [--out DIR] [--no-announce]" >&2
   exit 2
 }
 
@@ -50,10 +50,12 @@ shift
 VERSION="${TAG#v}"
 LOCAL=""
 OUT=""
+ANNOUNCE_IT=1
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --local) [ "$#" -ge 2 ] || usage; LOCAL="$2"; shift 2 ;;
     --out) [ "$#" -ge 2 ] || usage; OUT="$2"; shift 2 ;;
+    --no-announce) ANNOUNCE_IT=0; shift ;;
     *) usage ;;
   esac
 done
@@ -268,6 +270,12 @@ for path, zip_name in (('/download/addon', 'vanatell-%s.zip' % tag), ('/download
         sys.exit('release: %s leads to %r, not %s' % (path, location, zip_name))
 print('release: verified latest.json (%s), %d files by SHA-256 and size, and both download links' % (want['version'], n))
 PY
+
+if [ "$ANNOUNCE_IT" -eq 0 ]; then
+  echo "release: --no-announce: no Discord announcement (a quick fix right after a release is never announced on its own)"
+  echo "release: done. Commit and push the cache key change in $SITE/src/index.ts."
+  exit 0
+fi
 
 # 7. The announcement in the Discord's #announcements (embeds off; the links are plain): the
 #    lines of tools/announce.md at the tag, checked above; never the CHANGELOG.
