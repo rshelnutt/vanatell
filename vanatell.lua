@@ -35,6 +35,7 @@ local PING_INTERVAL = 30   -- seconds between keepalive pings
 local IDLE_TIMEOUT = 90    -- silence from the relay this long means the link is dead
 local AUTO_UPDATE_GAP = 600 -- seconds between two updates started by the relay's refusal (close 4004)
 local MAX_FRAMES = 20      -- frames decoded per prerender
+local OPENS_MAX = 1        -- sealed sends opened per prerender; a burst (the relay's outbox after a reconnect) waits in the socket for the next frames
 
 local QUEUE_MAX = 500         -- chat frames held while disconnected
 local ECHO_WINDOW = 30        -- seconds a phone send waits for the game's copy of it (the relay's window)
@@ -101,6 +102,7 @@ local app = {
   next_attempt = 0,    -- when waiting: the time of the next connect
   queue = {},          -- encoded chat frames held while disconnected
   sealing = {},        -- lines captured with keys, waiting for the next prerender to seal them
+  opened = 0,          -- sealed sends opened this prerender
   queue_full = false,  -- the queue full line was logged since the last flush
   executed = {},       -- send id -> true, for the ids in executed_order
   executed_order = {}, -- the last EXECUTED_IDS_MAX executed send ids, oldest first
@@ -1024,6 +1026,7 @@ local function handle_send(client, frame)
   local send = {frame = frame, text = frame.text}
   if keys then
     if frame.e2e == nil then return ack(client, id, false, 'not encrypted') end
+    app.opened = app.opened + 1
     local opened, err = e2e.open_send(keys, frame)
     if not opened then return ack(client, id, false, err) end
     local want
@@ -1719,6 +1722,12 @@ windower.register_event('unload', function()
   if client then client:abort() end
 end)
 
+-- The socket's frames this prerender: up to MAX_FRAMES, and none past the
+-- OPENS_MAX-th sealed send opened.
+local function open_more()
+  return app.opened < OPENS_MAX
+end
+
 windower.register_event('prerender', function()
   seal_lines()
   if app.pairing then app.pairing:pump() end
@@ -1734,7 +1743,8 @@ windower.register_event('prerender', function()
     log('connection lost (' .. tostring(app.last_error) .. '), retrying')
   end
   if app.state == 'waiting' and t >= app.next_attempt then connect() end
-  if app.client then app.client:pump(MAX_FRAMES) end
+  app.opened = 0
+  if app.client then app.client:pump(MAX_FRAMES, open_more) end
   -- From the upgrade on, whether or not the relay has said hello.
   if app.client and app.last_rx then
     if t - app.last_rx >= IDLE_TIMEOUT then
