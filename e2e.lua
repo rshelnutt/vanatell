@@ -32,10 +32,10 @@ function e2e.available()
 end
 
 -- Ladder steps per prerender for a scalar multiplication: 64 on LuaJIT with
--- its compiler on, else 8 (Lua 5.1, and LuaJIT with the compiler off, which
--- runs this about as fast as Lua 5.1): about 0.2 ms a frame on a fast PC.
+-- its compiler on, else 32 (Lua 5.1, and LuaJIT with the compiler off, which
+-- runs this about as fast as Lua 5.1): about 0.65 ms a frame on a fast PC.
 local jit = rawget(_G, 'jit')
-e2e.STEPS = (jit and jit.status and jit.status()) and 64 or 8
+e2e.STEPS = (jit and jit.status and jit.status()) and 64 or 32
 
 ---------------------------------------------------------------------------
 -- Base64url without padding (RFC 4648, section 5).
@@ -471,7 +471,7 @@ end
 
 local K121665 = gf({0xdb41, 1})
 local BASE = char(9) .. ('\0'):rep(31)
-local INV_SLICE = 32 -- squarings per step of the final inversion
+local INV_SLICE = 128 -- squarings per step of the final inversion
 
 local Job = {}
 Job.__index = Job

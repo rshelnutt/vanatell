@@ -480,6 +480,7 @@ if e2e.available() then
     seed_path = DATA_DIR .. 'entropy.seed',
     sha256 = sha256,
     start_values = start_values,
+    clocks = {os.clock, now},
   }
 end
 
