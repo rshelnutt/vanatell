@@ -31,9 +31,11 @@ function e2e.available()
   return bit ~= nil
 end
 
--- Ladder steps per prerender for a scalar multiplication: about 0.7 ms on a
--- fast PC on Lua 5.1, under 1 ms on LuaJIT.
-e2e.STEPS = rawget(_G, 'jit') and 64 or 8
+-- Ladder steps per prerender for a scalar multiplication: 64 on LuaJIT with
+-- its compiler on, else 8 (Lua 5.1, and LuaJIT with the compiler off, which
+-- runs this about as fast as Lua 5.1): about 0.2 ms a frame on a fast PC.
+local jit = rawget(_G, 'jit')
+e2e.STEPS = (jit and jit.status and jit.status()) and 64 or 8
 
 ---------------------------------------------------------------------------
 -- Base64url without padding (RFC 4648, section 5).
