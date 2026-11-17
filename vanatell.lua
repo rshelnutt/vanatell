@@ -543,9 +543,13 @@ local function start_job(stage, kx, data)
   app.e2e.job = {stage = stage, kx = kx, data = data, job = e2e.x25519_job(kx.a, stage == 'A' and e2e.BASE or data.B)}
 end
 
+-- A stage of the exchange that is not a scalar multiplication.
+local STAGE = {ladder_done = 255}
+
 -- The exchange in progress gets its private key from the pool, or a wait
 -- (once) while the pool is not ready. A ready pool still finishing a mix
--- gives the key a few frames later, with no wait.
+-- gives the key a few frames later, with no wait. The key file is written
+-- and the job started in the next prerender (stage 'save').
 local function make_key()
   local s = app.e2e
   local kx = s.kx
@@ -553,8 +557,7 @@ local function make_key()
   local a = pool:take()
   if a then
     kx.a = a
-    write_keyfile()
-    start_job('A', kx)
+    s.job = {stage = 'save', kx = kx, job = STAGE}
   elseif not pool:ready() and not s.waited[kx.kxId] then
     s.waited[kx.kxId] = true
     send_kx{{'step', 'wait'}, {'id', kx.kxId}}
@@ -585,48 +588,75 @@ local function begin_shared(reveal)
   start_job('s', kx, {B = reveal.B, th = th})
 end
 
--- The shared secret is known: the keys, the key file, the recovery key in
--- the settings, the safety code in the log, and the confirm.
-local function finish_exchange(kx, data, shared)
+-- The shared secret is known: the rest of the exchange, a stage a
+-- prerender so none goes past the frame budget: the keys ('keys', e2e.HMACS
+-- HMACs a frame), the key id, safety code and proofs ('proofs'), the keys
+-- in place, the key file, the confirm and the safety code in the log
+-- ('commit'), then the recovery key in the settings ('settle').
+local function finish_stage(j)
   local s = app.e2e
-  if not shared then
-    forget_exchange()
-    return abort(kx.kxId, 'bad key')
+  local kx, data = j.kx, j.data
+  if j.stage == 'keys' then
+    local k = j.job:step(e2e.HMACS)
+    if k then j.stage, j.k, j.job = 'proofs', k, STAGE end
+  elseif j.stage == 'proofs' then
+    local th, k = data.th, j.k
+    local rmac
+    if kx.recover then
+      local _, key = recovery()
+      rmac = e2e.b64url(e2e.recover_mac(bytes_of(key, 32), 'addon', th))
+    end
+    j.keys = {keyId = e2e.key_id(th), code = e2e.safety_code(th), lineKey = k.lineKey, lineNonce = k.lineNonce,
+              sendKey = k.sendKey, recoverKey = k.recoverKey, A = kx.A, B = data.B, kxId = kx.kxId,
+              mac = e2e.b64url(e2e.confirm_mac(k.confirmKey, th)), rmac = rmac, acked = false,
+              doneMac = e2e.b64url(e2e.done_mac(k.confirmKey, th))}
+    j.stage = 'commit'
+  elseif j.stage == 'commit' then
+    s.keys = j.keys
+    s.kx, s.reveal = nil, nil
+    write_keyfile()
+    pool:stop()
+    log('encryption on. Safety code: ' .. j.keys.code .. '. The app shows the same code in Settings, under Encryption.')
+    send_confirm()
+    j.stage = 'settle'
+  else
+    s.job = nil
+    local k = j.keys
+    set_recovery(k.keyId, e2e.b64url(k.recoverKey))
+    settings.e2e_account = settings.account_id
+    save()
   end
-  local th = data.th
-  local k = e2e.derive(shared, th)
-  local key_id, code = e2e.key_id(th), e2e.safety_code(th)
-  local rmac
-  if kx.recover then
-    local _, key = recovery()
-    rmac = e2e.b64url(e2e.recover_mac(bytes_of(key, 32), 'addon', th))
-  end
-  s.keys = {keyId = key_id, code = code, lineKey = k.lineKey, lineNonce = k.lineNonce, sendKey = k.sendKey,
-            recoverKey = k.recoverKey, A = kx.A, B = data.B, kxId = kx.kxId, mac = e2e.b64url(e2e.confirm_mac(k.confirmKey, th)),
-            rmac = rmac, acked = false, doneMac = e2e.b64url(e2e.done_mac(k.confirmKey, th))}
-  s.kx, s.reveal = nil, nil
-  write_keyfile()
-  set_recovery(key_id, e2e.b64url(k.recoverKey))
-  settings.e2e_account = settings.account_id
-  save()
-  pool:stop()
-  log('encryption on. Safety code: ' .. code .. '. The app shows the same code in Settings, under Encryption.')
-  send_confirm()
 end
+
+local FINISH = {keys = true, proofs = true, commit = true, settle = true}
 
 -- Every prerender: one step of the job, or the pool asked again for a key.
 local function pump_job()
   local s = app.e2e
   local j = s.job
   if not j then return make_key() end
+  if j.stage == 'settle' then return finish_stage(j) end
   if s.kx ~= j.kx or s.keys then
     s.job = nil
     return
   end
+  if FINISH[j.stage] then return finish_stage(j) end
+  if j.stage == 'save' then
+    write_keyfile()
+    return start_job('A', j.kx)
+  end
   local result = j.job:step(e2e.STEPS)
   if result == nil then return end
   s.job = nil
-  if j.stage == 's' then return finish_exchange(j.kx, j.data, result) end
+  if j.stage == 's' then
+    if not result then
+      forget_exchange()
+      return abort(j.kx.kxId, 'bad key')
+    end
+    s.job = {stage = 'keys', kx = j.kx, data = j.data, job = e2e.derive_job(result, j.data.th)}
+    s.job.job.ladder_done = 255
+    return
+  end
   j.kx.A = result
   if s.reveal and s.reveal.kxId == j.kx.kxId then return begin_shared(s.reveal) end
   send_key(j.kx)
@@ -658,7 +688,7 @@ local function on_reveal(frame)
   end
   local kx = s.kx
   if not (kx and kx.kxId == frame.id and kx.a) then return abort(frame.id, 'unknown exchange') end
-  if (s.job and s.job.stage == 's' and s.job.kx == kx) or s.reveal then return end -- being worked on
+  if (s.job and s.job.kx == kx and (s.job.stage == 's' or FINISH[s.job.stage])) or s.reveal then return end -- being worked on
   local B = bytes_of(frame.b, 32)
   if not B or e2e.commit_hash(kx.id, B) ~= kx.h then
     forget_exchange()

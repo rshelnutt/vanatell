@@ -13,9 +13,9 @@ in this folder for what you may and may not do with it.
 --   The pool is 32 bytes; input is buffered and hashed into it
 --   (P = SHA-256(P || input)) once a second, and while the pool has fewer
 --   than 256 credits also whenever the buffer holds 1 KB or brings the pool
---   to 256, at most 256 bytes a frame (about 0.12 ms on Lua 5.1 on a fast
---   PC). A packet adds its id, its first 8 bytes after the header and the
---   clock.
+--   to 256, at most 1 KB a frame (about 0.45 ms on Lua 5.1 on a fast PC), and
+--   never in a prerender that spins. A packet adds its id, its first 8 bytes
+--   after the header and the clock.
 --   Frame timing: while the pool gathers and has fewer than 256 credits,
 --   each prerender spins reading the finest clock it found at start
 --   (os.clock or socket.gettime, read in whole milliseconds when it is finer
@@ -23,8 +23,9 @@ in this folder for what you may and may not do with it.
 --   the count says where in the clock step the frame began, which nothing
 --   off this PC can see. Then it spins once more until the next step: that
 --   count is how fast the PC ran the loop just then. At most 1.8 ms of
---   spinning a prerender, by the count of reads one clock step took. A key
---   is not taken in a prerender that spun.
+--   spinning a prerender, by the count of reads one clock step took; none
+--   in a prerender that mixes or writes the seed. A key is not taken in a
+--   prerender that spun or mixed.
 --   Credits: each count earns 4 (about half its measured min-entropy), only
 --   when it differs from the one before it and the clock stepped forward; a
 --   mouse or keyboard event unlike the one before it earns 1, an incoming packet
@@ -34,7 +35,7 @@ in this folder for what you may and may not do with it.
 --   a mix is dropped and earns nothing.
 --   A key comes out once the pool holds 256 credits and has harvested for 1
 --   second, or at once from a ready seed or 32 system bytes, and no mix is
---   being hashed (one under way goes on at 256 bytes a frame first). Each
+--   being hashed (one under way goes on at 1 KB a frame first). Each
 --   key is SHA-256(P || "out" || counter), and the pool then moves on
 --   (P = SHA-256(P || "next")), so a key cannot be worked out from a later pool.
 --   The seed, SHA-256(P || "seed"), is kept in entropy.seed with a ready flag
@@ -51,7 +52,7 @@ local random = {}
 
 local BUFFER_MAX = 8192  -- bytes of input held between mixes
 local MIX_EVERY = 1      -- seconds between mixes
-local MIX_BUDGET = 256   -- bytes hashed a frame
+local MIX_BUDGET = 1024  -- bytes hashed a frame
 local MIX_AT = 1024      -- bytes in the buffer that start a mix while the pool gathers
 local NEEDED = 256       -- credits before a key
 local FLOOR = 1          -- seconds of harvesting before a key, without a ready seed
@@ -82,7 +83,7 @@ function random.new(opts)
     buf = {}, buf_bytes = 0, buf_credits = 0, mixing = nil,
     started = false, harvesting = false, ids = {}, floor_lifted = false, seed_ready = false,
     elapsed = 0, last_t = nil, last_mix = -math.huge, last_seed_write = nil,
-    high = -math.huge, last_key = {}, frame_credits = 0, spinner = nil, ready_written = false, spun = false,
+    high = -math.huge, last_key = {}, frame_credits = 0, spinner = nil, ready_written = false, spun = false, mixed = false,
     ready_pumps = 0,
   }, Pool)
 end
@@ -277,24 +278,20 @@ function Pool:gathered()
   return self.credits + self.buf_credits + (self.mixing and self.mixing.credits or 0)
 end
 
--- Every prerender: the seed two prerenders after the pool turned ready
--- (unless a key, which writes it, came first), the spin while the pool
--- gathers, one bounded step of mixing, and the seed every 5 minutes while
--- harvesting.
+-- Every prerender, one of: the seed two prerenders after the pool turned
+-- ready (unless a key, which writes it, came first), one bounded step of
+-- mixing, or the spin while the pool gathers; and the seed every 5 minutes
+-- while harvesting.
 function Pool:pump(t)
   if self.last_t and t > self.last_t then self.elapsed = self.elapsed + (t - self.last_t) end
   self.last_t = t
-  self.frame_credits, self.spun = 0, false
+  self.frame_credits, self.spun, self.mixed = 0, false, false
   if self.ready_pumps >= 2 and not self.ready_written and self.harvesting then
     self.ready_written, self.seed_ready, self.last_seed_write = true, true, t
     self:write_seed()
-  end
-  if self.harvesting and self.spinner and self:gathered() < NEEDED then
-    self.spun = true
-    self:spin_once()
-  end
-  if self.mixing then
+  elseif self.mixing then
     local m = self.mixing
+    self.mixed = true
     if m.hasher:step(MIX_BUDGET) then self.P, self.credits, self.mixing = m.hasher.raw, self.credits + m.credits, nil end
   elseif self.buf_bytes > 0 and (t - self.last_mix >= MIX_EVERY or t < self.last_mix
                                  or (self.credits < NEEDED and (self.buf_bytes >= MIX_AT
@@ -302,7 +299,11 @@ function Pool:pump(t)
     self.mixing = {hasher = self.sha.hasher(self.P .. table.concat(self.buf), self.impl), credits = self.buf_credits}
     self.buf, self.buf_bytes, self.buf_credits, self.last_mix = {}, 0, 0, t
     local m = self.mixing
+    self.mixed = true
     if m.hasher:step(MIX_BUDGET) then self.P, self.credits, self.mixing = m.hasher.raw, self.credits + m.credits, nil end
+  elseif self.harvesting and self.spinner and self:gathered() < NEEDED then
+    self.spun = true
+    self:spin_once()
   end
   if self:ready() then
     self.seed_ready, self.ready_pumps = true, self.ready_pumps + 1
@@ -314,11 +315,11 @@ function Pool:pump(t)
 end
 
 -- A 32-byte key, or nil while the pool is not ready, a mix is being hashed
--- (pump goes on with it, 256 bytes a frame; take again then) or the pool
--- spun this prerender (take again in the next). The pool moves on and the
+-- (pump goes on with it, 1 KB a frame; take again then) or the pool spun or
+-- mixed this prerender (take again in the next). The pool moves on and the
 -- seed is written again.
 function Pool:take()
-  if not self:ready() or self.mixing or self.spun then return nil end
+  if not self:ready() or self.mixing or self.spun or self.mixed then return nil end
   self.counter = self.counter + 1
   local out = self:hash(self.P .. 'out' .. tostring(self.counter))
   self.P = self:hash(self.P .. 'next')

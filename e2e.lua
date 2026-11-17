@@ -32,10 +32,13 @@ function e2e.available()
 end
 
 -- Ladder steps per prerender for a scalar multiplication: 64 on LuaJIT with
--- its compiler on, else 20 (Lua 5.1, and LuaJIT with the compiler off, which
--- runs this about as fast as Lua 5.1): about 0.5 ms a frame on a fast PC.
+-- its compiler on, else 24 (Lua 5.1, and LuaJIT with the compiler off, which
+-- runs this about as fast as Lua 5.1): about 0.55 ms a frame on a fast PC.
 local jit = rawget(_G, 'jit')
-e2e.STEPS = (jit and jit.status and jit.status()) and 64 or 20
+e2e.STEPS = (jit and jit.status and jit.status()) and 64 or 24
+-- HMACs per prerender of the key derivation (9 in all): all of them on
+-- LuaJIT with its compiler on, else 3 (about 0.35 ms on a fast PC).
+e2e.HMACS = (jit and jit.status and jit.status()) and 9 or 3
 
 ---------------------------------------------------------------------------
 -- Base64url without padding (RFC 4648, section 5).
@@ -96,23 +99,41 @@ for b = 0, 255 do
   OPAD[char(b)] = char(bxor(b, 0x5c))
 end
 
-function e2e.hmac(key, msg)
+-- An HMAC key's inner and outer padded blocks.
+local function pads(key)
   if #key > 64 then key = digest(key) end
   key = key .. ('\0'):rep(64 - #key)
-  return digest(key:gsub('.', OPAD) .. digest(key:gsub('.', IPAD) .. msg))
+  return (key:gsub('.', IPAD)), (key:gsub('.', OPAD))
+end
+
+function e2e.hmac(key, msg)
+  local ipad, opad = pads(key)
+  return digest(opad .. digest(ipad .. msg))
 end
 local hmac = e2e.hmac
 
--- HKDF-SHA256 (RFC 5869): len bytes of output key material.
-function e2e.hkdf(salt, ikm, info, len)
-  local prk = hmac(salt, ikm)
-  local out, t, i = {}, '', 1
-  while 32 * (i - 1) < len do
-    t = hmac(prk, t .. info .. char(i))
-    out[i] = t
-    i = i + 1
+-- HKDF-SHA256 (RFC 5869) as a job: job:step(n) does at most n HMACs and
+-- returns the len bytes of output key material once it is done, else nil.
+-- The pseudorandom key's pads are made once, for every block.
+function e2e.hkdf_job(salt, ikm, info, len)
+  local job = {t = '', i = 1, out = {}}
+  function job:step(n)
+    for _ = 1, n do
+      if not self.ipad then
+        self.ipad, self.opad = pads(hmac(salt, ikm))
+      else
+        self.t = digest(self.opad .. digest(self.ipad .. self.t .. info .. char(self.i)))
+        self.out[self.i], self.i = self.t, self.i + 1
+      end
+      if 32 * (self.i - 1) >= len then return concat(self.out):sub(1, len) end
+    end
   end
-  return concat(out):sub(1, len)
+  return job
+end
+
+-- HKDF-SHA256 at once.
+function e2e.hkdf(salt, ikm, info, len)
+  return e2e.hkdf_job(salt, ikm, info, len):step(math.huge)
 end
 
 ---------------------------------------------------------------------------
@@ -575,11 +596,23 @@ function e2e.transcript(account_id, kx_id, A, B)
   return digest(lp(LABEL.transcript) .. lp(account_id) .. lp(kx_id) .. A .. B)
 end
 
--- The eight 32-byte keys, from the shared secret and the transcript.
+-- The eight 32-byte keys, from the shared secret and the transcript, as a
+-- job: job:step(n) does at most n of its 9 HMACs and returns the keys once
+-- it is done, else nil.
+function e2e.derive_job(shared, th)
+  local hkdf = e2e.hkdf_job(th, shared, LABEL.keys, 256)
+  return {step = function(_, n)
+    local okm = hkdf:step(n)
+    if not okm then return nil end
+    local keys = {}
+    for i, name in ipairs(KEY_NAMES) do keys[name] = okm:sub(32 * i - 31, 32 * i) end
+    return keys
+  end}
+end
+
+-- The eight keys at once.
 function e2e.derive(shared, th)
-  local okm, keys = e2e.hkdf(th, shared, LABEL.keys, 256), {}
-  for i, name in ipairs(KEY_NAMES) do keys[name] = okm:sub(32 * i - 31, 32 * i) end
-  return keys
+  return e2e.derive_job(shared, th):step(math.huge)
 end
 
 local function to_hex(s)
