@@ -10,14 +10,18 @@ in this folder for what you may and may not do with it.
 -- which reaches the relay. On Ashita, Windows' generator is asked first
 -- (32 bytes from BCryptGenRandom), and the pool only backs it up.
 --   The pool is 32 bytes; input is buffered and hashed into it
---   (P = SHA-256(P || input)) at most once a second, at most 4 KB a frame.
+--   (P = SHA-256(P || input)) at most once a second, at most 1 KB a frame
+--   (about 0.5 ms on Lua 5.1 on a fast PC), so a mix of a full buffer spans
+--   about 9 frames. A packet adds its id, its first 8 bytes after the header
+--   and the clock.
 --   Credits: a mouse or keyboard event unlike the one before it earns 1, an
 --   incoming packet 1/8, nothing else any; at most one event earns credit
 --   per clock value, and none while the clock is below the highest value
 --   already credited (a clock set back earns nothing more). Input past 8 KB
 --   before a mix is dropped and earns nothing.
 --   A key comes out once the pool holds 256 credits and has harvested for 60
---   seconds, or at once from a ready seed or 32 system bytes. Each key is
+--   seconds, or at once from a ready seed or 32 system bytes, and no mix is
+--   being hashed (one under way goes on at 1 KB a frame first). Each key is
 --   SHA-256(P || "out" || counter), and the pool then moves on
 --   (P = SHA-256(P || "next")), so a key cannot be worked out from a later pool.
 --   The seed, SHA-256(P || "seed"), is kept in entropy.seed with a ready flag
@@ -31,7 +35,7 @@ local random = {}
 
 local BUFFER_MAX = 8192  -- bytes of input held between mixes
 local MIX_EVERY = 1      -- seconds between mixes
-local MIX_BUDGET = 4096  -- bytes hashed a frame
+local MIX_BUDGET = 1024  -- bytes hashed a frame
 local NEEDED = 256       -- credits before a key
 local FLOOR = 60         -- seconds of harvesting before a key, without a ready seed
 local SEED_EVERY = 300   -- seconds between seed writes while harvesting
@@ -120,10 +124,10 @@ function Pool:start()
     self:add('k' .. tostring(key) .. ',' .. tostring(pressed) .. ',' .. tostring(flags), 'keyboard', 1)
   end)
   on('incoming chunk', function(id, data)
-    self:add('i' .. tostring(id) .. ':' .. (type(data) == 'string' and data:sub(5, 36) or ''), nil, PACKET_CREDIT)
+    self:add('i' .. tostring(id) .. ':' .. (type(data) == 'string' and data:sub(5, 12) or ''), nil, PACKET_CREDIT)
   end)
   on('outgoing chunk', function(id, data)
-    self:add('o' .. tostring(id) .. ':' .. (type(data) == 'string' and data:sub(5, 36) or ''), nil, 0)
+    self:add('o' .. tostring(id) .. ':' .. (type(data) == 'string' and data:sub(5, 12) or ''), nil, 0)
   end)
 end
 
@@ -137,6 +141,7 @@ function Pool:ready()
   return self.credits >= NEEDED and (self.floor_lifted or self.elapsed >= FLOOR)
 end
 
+-- The mix under way, all at once: only at unload.
 function Pool:finish_mix()
   local m = self.mixing
   if not m then return end
@@ -165,11 +170,11 @@ function Pool:pump(t)
   end
 end
 
--- A 32-byte key, or nil while the pool is not ready. The pool moves on and
--- the seed is written again.
+-- A 32-byte key, or nil while the pool is not ready or a mix is being
+-- hashed (pump goes on with it, 1 KB a frame; take again then). The pool
+-- moves on and the seed is written again.
 function Pool:take()
-  if not self:ready() then return nil end
-  self:finish_mix()
+  if not self:ready() or self.mixing then return nil end
   self.counter = self.counter + 1
   local out = self:hash(self.P .. 'out' .. tostring(self.counter))
   self.P = self:hash(self.P .. 'next')

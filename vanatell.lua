@@ -478,7 +478,8 @@ local function start_job(stage, kx, data)
 end
 
 -- The exchange in progress gets its private key from the pool, or a wait
--- (once) while the pool is not ready.
+-- (once) while the pool is not ready. A ready pool still finishing a mix
+-- gives the key a few frames later, with no wait.
 local function make_key()
   local s = app.e2e
   local kx = s.kx
@@ -488,7 +489,7 @@ local function make_key()
     kx.a = a
     write_keyfile()
     start_job('A', kx)
-  elseif not s.waited[kx.kxId] then
+  elseif not pool:ready() and not s.waited[kx.kxId] then
     s.waited[kx.kxId] = true
     send_kx{{'step', 'wait'}, {'id', kx.kxId}}
   end
