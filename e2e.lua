@@ -32,10 +32,10 @@ function e2e.available()
 end
 
 -- Ladder steps per prerender for a scalar multiplication: 64 on LuaJIT with
--- its compiler on, else 32 (Lua 5.1, and LuaJIT with the compiler off, which
--- runs this about as fast as Lua 5.1): about 0.65 ms a frame on a fast PC.
+-- its compiler on, else 20 (Lua 5.1, and LuaJIT with the compiler off, which
+-- runs this about as fast as Lua 5.1): about 0.5 ms a frame on a fast PC.
 local jit = rawget(_G, 'jit')
-e2e.STEPS = (jit and jit.status and jit.status()) and 64 or 32
+e2e.STEPS = (jit and jit.status and jit.status()) and 64 or 20
 
 ---------------------------------------------------------------------------
 -- Base64url without padding (RFC 4648, section 5).
@@ -478,8 +478,8 @@ Job.__index = Job
 
 -- A scalar multiplication, scalar * u, done a few ladder steps per call:
 -- job:step(n) does at most n ladder steps, or one slice of the final
--- inversion, and returns the 32-byte result once it is done (false when it
--- is all zero, a low-order point), else nil. job.ladder_done counts the
+-- inversion, or the last multiplication, and returns the 32-byte result
+-- once it is done (false when it is all zero, a low-order point), else nil. job.ladder_done counts the
 -- ladder steps done (255 in all).
 function e2e.x25519_job(scalar, u)
   local z = {byte(scalar, 1, 32)}
@@ -511,16 +511,19 @@ function Job:step(n)
     if i < 0 then self.inv, self.k = gf(c), 253 end
     return nil
   end
-  -- c^(p - 2) by square-and-multiply, INV_SLICE squarings a step; then a / c.
+  -- c^(p - 2) by square-and-multiply, INV_SLICE squarings a step; then, a
+  -- step of its own, a / c.
   local inv, c, k = self.inv, self.c, self.k
-  local stop = math.max(k - INV_SLICE, -1)
-  while k > stop do
-    S(inv, inv)
-    if k ~= 2 and k ~= 4 then M(inv, inv, c) end
-    k = k - 1
+  if k >= 0 then
+    local stop = math.max(k - INV_SLICE, -1)
+    while k > stop do
+      S(inv, inv)
+      if k ~= 2 and k ~= 4 then M(inv, inv, c) end
+      k = k - 1
+    end
+    self.k = k
+    return nil
   end
-  self.k = k
-  if k >= 0 then return nil end
   local out = gf()
   M(out, self.a, inv)
   local result = pack25519(out)
