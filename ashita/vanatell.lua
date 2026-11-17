@@ -258,7 +258,8 @@ end
 -- Every save is for all characters: there is one file per Ashita folder.
 -- It goes to settings.json.tmp first, then is renamed over settings.json
 -- (Windows will not rename onto an existing file, so that goes first), so
--- the token and the recovery key are never left half written.
+-- the token and the recovery key are never left half written. A failed
+-- rename leaves settings.json.tmp, which the next load takes.
 function config.save(settings)
   local keys = {}
   for k, v in pairs(settings) do
@@ -277,8 +278,9 @@ function config.save(settings)
   if written then
     os.remove(SETTINGS_FILE)
     if os.rename(tmp, SETTINGS_FILE) then return true end
+  else
+    os.remove(tmp)
   end
-  os.remove(tmp)
   add_to_chat(207, 'VanaTell: could not save settings to config/addons/vanatell/settings.json')
   return false
 end

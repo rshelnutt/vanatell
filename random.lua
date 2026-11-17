@@ -84,8 +84,18 @@ function Pool:add(piece, kind, credit)
   self.buf_bytes = self.buf_bytes + #entry
 end
 
+-- The seed file, or when there is none, the .tmp a failed rename left (put
+-- in place if it can be).
 local function read_file(path)
   local f = io.open(path, 'rb')
+  if not f then
+    local tmp = path .. '.tmp'
+    f = io.open(tmp, 'rb')
+    if f then
+      f:close()
+      if os.rename(tmp, path) then f = io.open(path, 'rb') else f = io.open(tmp, 'rb') end
+    end
+  end
   if not f then return nil end
   local s = f:read('*a')
   f:close()
@@ -183,7 +193,9 @@ function Pool:take()
   return out
 end
 
--- entropy.seed, through entropy.seed.tmp and a rename.
+-- entropy.seed, through entropy.seed.tmp and a rename. A failed write leaves
+-- the seed as it was; a failed rename leaves entropy.seed.tmp, which the
+-- next start reads.
 function Pool:write_seed()
   local seed = self:hash(self.P .. 'seed'):gsub('.', function(c) return string.format('%02x', c:byte()) end)
   local text = '{"v":1,"seed":"' .. seed .. '","ready":' .. tostring(self.seed_ready) .. '}'
@@ -192,8 +204,12 @@ function Pool:write_seed()
   if not f then return end
   local ok = f:write(text)
   f:close()
+  if not ok then
+    os.remove(tmp)
+    return
+  end
   os.remove(self.seed_path) -- Windows will not rename onto an existing file
-  if not (ok and os.rename(tmp, self.seed_path)) then os.remove(tmp) end
+  os.rename(tmp, self.seed_path)
 end
 
 -- At unload: the seed, if this load's pool ever started (one that never did

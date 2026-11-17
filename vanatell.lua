@@ -313,14 +313,47 @@ local function parse_sent(list)
   return sent
 end
 
--- -> {keys =, kx =, sent =} | nil (no file, or one that counts as none)
-local function read_keyfile()
-  if not is_account_id(settings.account_id) then return nil end
-  local f = io.open(KEY_FILE, 'rb')
+-- Writes text to path through path.tmp and a rename (Windows will not
+-- rename onto an existing file, so path goes first). A failed write leaves
+-- path as it was; a failed rename leaves path.tmp, which read_written takes.
+local function write_through(path, text)
+  local tmp = path .. '.tmp'
+  local f = io.open(tmp, 'wb')
+  if not f then return end
+  local ok = f:write(text)
+  f:close()
+  if not ok then
+    os.remove(tmp)
+    return
+  end
+  os.remove(path)
+  os.rename(tmp, path)
+end
+
+-- A file written by write_through: path, or when there is none, the
+-- path.tmp a failed rename left, put in place if it can be. -> its text | nil
+local function read_written(path)
+  local f = io.open(path, 'rb')
+  if not f then
+    local tmp = path .. '.tmp'
+    f = io.open(tmp, 'rb')
+    if f then
+      f:close()
+      if os.rename(tmp, path) then f = io.open(path, 'rb') else f = io.open(tmp, 'rb') end
+    end
+  end
   if not f then return nil end
   local text = f:read('*a')
   f:close()
-  local ok, t = pcall(json.decode, text or '')
+  return text
+end
+
+-- -> {keys =, kx =, sent =} | nil (no file, or one that counts as none)
+local function read_keyfile()
+  if not is_account_id(settings.account_id) then return nil end
+  local text = read_written(KEY_FILE)
+  if not text then return nil end
+  local ok, t = pcall(json.decode, text)
   if not (ok and type(t) == 'table' and t.v == 1 and t.account == settings.account_id) then return nil end
   local file = {sent = parse_sent(t.sent)}
   if not file.sent then return nil end
@@ -361,13 +394,7 @@ local function write_keyfile()
   local text = '{"v":1,"account":' .. json.encode(settings.account_id) .. ',"keys":' .. (keys == NULL and 'null' or keys)
     .. ',"kx":' .. (kx == NULL and 'null' or kx) .. ',"sent":[' .. table.concat(sent, ',') .. ']}'
   ensure_data_dir()
-  local tmp = KEY_FILE .. '.tmp'
-  local f = io.open(tmp, 'wb')
-  if not f then return end
-  local ok = f:write(text)
-  f:close()
-  os.remove(KEY_FILE) -- Windows will not rename onto an existing file
-  if not (ok and os.rename(tmp, KEY_FILE)) then os.remove(tmp) end
+  write_through(KEY_FILE, text)
 end
 
 -- Load: the key file into app.e2e; its recovery key and key id go into the
@@ -741,26 +768,18 @@ local function write_queue()
   if not windower.dir_exists(DATA_DIR) then pcall(windower.create_dir, DATA_DIR) end
   local frames = {}
   for i, frame in ipairs(app.queue) do frames[i] = json.encode(frame) end
-  local tmp = QUEUE_FILE .. '.tmp'
-  local f = io.open(tmp, 'wb')
-  if not f then return end
-  local ok = f:write('{"v":1,"frames":[' .. table.concat(frames, ',') .. ']}')
-  f:close()
-  os.remove(QUEUE_FILE) -- Windows will not rename onto an existing file
-  if not (ok and os.rename(tmp, QUEUE_FILE)) then os.remove(tmp) end
+  write_through(QUEUE_FILE, '{"v":1,"frames":[' .. table.concat(frames, ',') .. ']}')
 end
 
 -- On load: the queue an update's reload left in queue.json, deleted at once.
 -- At most QUEUE_MAX frames (the newest), and only chat frames; a damaged file
 -- counts as none. They go out, as stored, once the relay says hello.
 local function read_queue()
-  os.remove(QUEUE_FILE .. '.tmp')
-  local f = io.open(QUEUE_FILE, 'rb')
-  if not f then return end
-  local text = f:read('*a')
-  f:close()
+  local text = read_written(QUEUE_FILE)
   os.remove(QUEUE_FILE)
-  local ok, saved = pcall(json.decode, text or '')
+  os.remove(QUEUE_FILE .. '.tmp')
+  if not text then return end
+  local ok, saved = pcall(json.decode, text)
   if not (ok and type(saved) == 'table' and saved.v == 1 and type(saved.frames) == 'table') then return end
   local frames = {}
   for _, frame in ipairs(saved.frames) do
