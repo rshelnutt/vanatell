@@ -797,12 +797,14 @@ end
 -- Just before an update's reload (//vt update, or the one the relay's
 -- refusal starts), and again at the unload of any update's or rollback's
 -- reload, the queue goes to queue.json, through queue.json.tmp and a rename;
--- an empty queue removes it. So the file holds the queue as it is at the
--- last moment. The next load reads it back and deletes it at once
--- (read_queue). This is the only time chat is written to disk.
+-- an empty queue removes it, and any queue.json.tmp a failed rename left, so
+-- no earlier queue is read back and sent twice. So the file holds the queue
+-- as it is at the last moment. The next load reads it back and deletes it at
+-- once (read_queue). This is the only time chat is written to disk.
 local function write_queue()
   if #app.queue == 0 then
     os.remove(QUEUE_FILE)
+    os.remove(QUEUE_FILE .. '.tmp')
     return
   end
   if not windower.dir_exists(DATA_DIR) then pcall(windower.create_dir, DATA_DIR) end
