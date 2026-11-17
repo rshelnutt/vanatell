@@ -110,6 +110,8 @@ On Ashita the line says `/vt pair <code>`, with one slash.
 2. In game, type `//vt pair CODE` (on Ashita, `/vt pair CODE`) with the code from the app in place of `CODE`. Upper or lower case both work.
 3. The game log shows `vanatell: paired (account ...)`, then `vanatell: connected to relay`. You're done.
 
+Once the app is updated too, encryption sets itself up within a few seconds, with nothing to tap or type. The game log then says `VanaTell: encryption on. Safety code: ...`, and `//vt status` (on Ashita, `/vt status`) shows the same code as the app's **Settings → Encryption**.
+
 To pair again later, open **Settings** in the app and tap **Generate new pairing code**.
 
 ## Commands
@@ -133,6 +135,7 @@ VanaTell: enabled: yes
 VanaTell: connection: connected
 VanaTell: queued: 0
 VanaTell: linkshells: 1=KupoKnights 2=(none)
+VanaTell: encryption: on, safety code 1234 5678 9012
 ```
 
 ## Updating
@@ -143,7 +146,7 @@ Each time it loads, the addon asks vanatell.com once for the newest version numb
 
 The addon also updates itself when the relay requires it. If the relay refuses this version, the addon says `VanaTell: encryption is on for this account; updating to the newest version` and runs the same update as `//vt update`, with every check it makes, at most once every 10 minutes. Lines said meanwhile are kept and sent once it reconnects. With `//vt off` (`/vt off`) the addon does not connect, so it never updates by itself.
 
-`//vt rollback` (`/vt rollback`) puts back the files the last update replaced and reloads. Lines waiting to be sent are kept across the reload when the version it goes back to is this one or newer.
+`//vt rollback` (`/vt rollback`) puts back the files the last update replaced and reloads. Lines waiting to be sent are kept across the reload when the version it goes back to is this one or newer. Once encryption is on for your account, it will not go back to a version without encryption.
 
 To update by hand instead, download the zip from [Releases](../../releases) as in Install.
 
@@ -151,7 +154,7 @@ To update by hand instead, download the zip from [Releases](../../releases) as i
 
 **Sent to the relay**
 
-- Each tell, party, LS1 and LS2 line: the channel, whether it came in or went out, who sent it, the tell target, the text, the time, and for linkshell lines the name of that linkshell.
+- Each tell, party, LS1 and LS2 line: the channel, whether it came in or went out, who sent it, the tell target, the text, the time, and for linkshell lines the name of that linkshell. Once encryption is on, the text is encrypted on your PC and the relay cannot read it; the rest stays readable so the relay can file and route the line.
 - The names and colours of the linkshells equipped in slots 1 and 2, when they change.
 - A keepalive every 30 seconds.
 
@@ -173,6 +176,8 @@ To update by hand instead, download the zip from [Releases](../../releases) as i
 
 - `addons/vanatell/data/settings.xml` holds this PC's pairing token in plain text. Treat it like a password. `//vt unpair` wipes the token.
 - On Ashita that file is `config/addons/vanatell/settings.json` in the Ashita folder, shared by all your characters. Treat it like a password too. `/vt unpair` wipes the token.
+- `addons/vanatell/data/e2e.json` (on Ashita, `config/addons/vanatell/e2e.json`) holds this pairing's encryption keys. Treat it like a password. `//vt unpair` wipes it. The settings file also keeps a recovery key, so a lost `e2e.json` can be replaced without pairing again.
+- `entropy.seed`, next to it, holds only a hash used to make future keys quickly.
 - Lines that arrive while the relay is out of reach wait in memory, up to 500. They are written to disk only for the seconds the reload of an update or a rollback takes, in `addons/vanatell/data/queue.json` (on Ashita, `config/addons/vanatell/queue.json`), then read back and deleted.
 
 Everything travels over an encrypted connection, and the addon checks the relay's certificate, and vanatell.com's for updates, against the small list of trust roots in `relay-roots.txt`. That file is not a certificate to install; it is only read by the addon.
