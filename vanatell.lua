@@ -230,7 +230,7 @@ hooks.updater = updater
 
 local NOT_PAIRED = 'not paired: run //vt pair <code> with the code from the VanaTell app'
 local REJECTED = 'relay rejected the addon token; pair again with //vt pair <code>'
-local ACCOUNT_DELETED = 'account deleted on the phone; set up the app again, then //vt pair <code>'
+local ACCOUNT_DELETED = 'account deleted on the device; set up the app again, then //vt pair <code>'
 
 ---------------------------------------------------------------------------
 -- Chat: frames for the relay, the offline queue and the phone's sends.
@@ -1635,7 +1635,7 @@ end
 local HELP = {
   'relays tells, party, LS1 and LS2 chat to the VanaTell app',
   'commands:',
-  '//vt pair <code> - pair with the code shown on your phone',
+  '//vt pair <code> - pair with the code shown on your device',
   '//vt status - show the connection state',
   '//vt on | //vt off - start or stop relaying',
   "//vt unpair - forget this addon's relay token",
