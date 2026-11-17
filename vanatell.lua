@@ -888,6 +888,15 @@ local function sent_record(field, value)
   return nil
 end
 
+-- A sealed send with this clientId under another relay id, held for a
+-- linkshell lookup (it has no replay record until it is typed).
+local function held_elsewhere(client_id, id)
+  for _, send in ipairs(app.ls.held_sends) do
+    if send.opened and send.frame.clientId == client_id and send.frame.id ~= id then return true end
+  end
+  return false
+end
+
 -- A send runs at most one game command per id and is always acked; the
 -- relay may replay an id after a reconnect. send = {frame =, text =, want =,
 -- opened =}: the frame, the text to type (the opened payload's, or the
@@ -966,7 +975,8 @@ end
 
 -- A send frame as it arrives, before it may wait for a linkshell lookup:
 -- with keys, it must be sealed under them, for the destination the frame
--- has, not typed before and not more than 12 hours from this PC's clock;
+-- has, not typed before nor held under another relay id, and not more than
+-- 12 hours from this PC's clock;
 -- without keys, it must be plaintext. The decision stands for a send held
 -- for a lookup, whatever happens to the keys meanwhile.
 local function handle_send(client, frame)
@@ -984,7 +994,9 @@ local function handle_send(client, frame)
     if want == nil then return ack(client, id, false, err) end
     local t = now_ms()
     if prune_sent(t) then write_keyfile() end
-    if sent_record('clientId', frame.clientId) then return ack(client, id, false, 'already sent') end
+    if sent_record('clientId', frame.clientId) or held_elsewhere(frame.clientId, id) then
+      return ack(client, id, false, 'already sent')
+    end
     if math.abs(opened.ts - t) > REPLAY_WINDOW then return ack(client, id, false, 'too old') end
     -- A send the phone sealed under these keys: it holds them, as done would say.
     if not keys.acked then
