@@ -115,7 +115,7 @@ local app = {
   e2e = {              -- encryption (e2e.lua), from the key file
     keys = nil,        -- this pairing's keys once an exchange completed
     kx = nil,          -- the exchange in progress: {kxId =, id =, h =, recover =, a =}
-    sent = {},         -- typed phone sends: {clientId =, id =, typedAt =, ts =}
+    sent = {},         -- opened phone sends, typed or refused: {clientId =, id =, typedAt =, ts =, error =}
     job = nil,         -- the X25519 job in prerender: {stage = 'A' | 's', kx =, data =, job =}
     reveal = nil,      -- a reveal waiting for A to be worked out again after a reload
     completed = 0,     -- reveals that matched their commit, this load
@@ -250,7 +250,8 @@ end
 ---------------------------------------------------------------------------
 -- It holds the account it belongs to, this pairing's keys once an exchange
 -- has completed, the exchange in progress (so a reload or a closed game
--- loses nothing) and the phone sends typed in the last 12 hours. It is
+-- loses nothing) and the phone sends opened in the last 12 hours, with the
+-- error of each one that was refused after it was opened. It is
 -- written through e2e.json.tmp and a rename. A file that does not parse, is
 -- malformed, or names another account counts as no file. Only a successful
 -- //vt pair and //vt unpair delete it.
@@ -304,10 +305,10 @@ local function parse_sent(list)
   local sent = {}
   for i, r in ipairs(list) do
     if not (type(r) == 'table' and type(r.clientId) == 'string' and is_time(r.id) and r.id >= 1
-            and is_time(r.typedAt) and is_time(r.ts)) then
+            and is_time(r.typedAt) and is_time(r.ts) and (r.error == nil or type(r.error) == 'string')) then
       return nil
     end
-    sent[i] = {clientId = r.clientId, id = r.id, typedAt = r.typedAt, ts = r.ts}
+    sent[i] = {clientId = r.clientId, id = r.id, typedAt = r.typedAt, ts = r.ts, error = r.error}
   end
   return sent
 end
@@ -355,7 +356,7 @@ local function write_keyfile()
                        {'a', x.a and e2e.b64url(x.a) or NULL}}
   end
   for i, r in ipairs(s.sent) do
-    sent[i] = encode_fields{{'clientId', r.clientId}, {'id', r.id}, {'typedAt', r.typedAt}, {'ts', r.ts}}
+    sent[i] = encode_fields{{'clientId', r.clientId}, {'id', r.id}, {'typedAt', r.typedAt}, {'ts', r.ts}, {'error', r.error}}
   end
   local text = '{"v":1,"account":' .. json.encode(settings.account_id) .. ',"keys":' .. (keys == NULL and 'null' or keys)
     .. ',"kx":' .. (kx == NULL and 'null' or kx) .. ',"sent":[' .. table.concat(sent, ',') .. ']}'
@@ -864,13 +865,14 @@ local function slot_name(state, channel)
   return shell and shell.name or nil
 end
 
-local REPLAY_WINDOW = 12 * 3600 * 1000 -- ms: a send this far from the PC's clock is too old, and a typed send's record lasts this long
+local REPLAY_WINDOW = 12 * 3600 * 1000 -- ms: a send this far from the PC's clock is too old, and an opened send's record lasts this long
 
 local function now_ms()
   return math.floor(now() * 1000)
 end
 
--- Drops replay records 12 hours past the later of typed time and send time.
+-- Drops replay records 12 hours past the later of typed (or refused) time
+-- and send time.
 local function prune_sent(t)
   local kept = {}
   for _, r in ipairs(app.e2e.sent) do
@@ -889,12 +891,25 @@ local function sent_record(field, value)
 end
 
 -- A sealed send with this clientId under another relay id, held for a
--- linkshell lookup (it has no replay record until it is typed).
+-- linkshell lookup (it has no replay record until it is typed or refused).
 local function held_elsewhere(client_id, id)
   for _, send in ipairs(app.ls.held_sends) do
     if send.opened and send.frame.clientId == client_id and send.frame.id ~= id then return true end
   end
   return false
+end
+
+-- An opened send's replay record, once it is typed or refused (err): the
+-- same clientId under another relay id is then already sent, and the same
+-- relay id gets the same answer again, so a send refused (not logged in,
+-- say) is never typed later.
+local function record_send(send, err)
+  if not send.opened then return end
+  local t = now_ms()
+  prune_sent(t)
+  app.e2e.sent[#app.e2e.sent + 1] = {clientId = send.frame.clientId, id = send.frame.id, typedAt = t, ts = send.opened.ts,
+                                     error = err}
+  write_keyfile()
 end
 
 -- A send runs at most one game command per id and is always acked; the
@@ -916,10 +931,16 @@ local function type_send(client, send, looked)
   local frame = send.frame
   local id = frame.id
   if app.executed[id] then return ack(client, id, true) end
-  if not windower.ffxi.get_player() then return ack(client, id, false, 'not logged in') end
+  local done = send.opened and sent_record('id', id)
+  if done then return ack(client, id, done.error == nil, done.error) end
+  local function refuse(err)
+    record_send(send, err)
+    return ack(client, id, false, err)
+  end
+  if not windower.ffxi.get_player() then return refuse('not logged in') end
   local channel = frame.channel
   local command, text = chat.validate_send(channel, frame.target, send.text)
-  if not command then return ack(client, id, false, text) end
+  if not command then return refuse(text) end
   if channel == 'ls1' or channel == 'ls2' then
     local ls = app.ls
     if send.want == nil then send.want = is_set(frame.linkshell) and frame.linkshell or slot_name(ls.sent, channel) or false end
@@ -930,22 +951,17 @@ local function type_send(client, send, looked)
         ls.held_sends[#ls.held_sends + 1] = send
         return
       end
-      if not ls.known then return ack(client, id, false, 'linkshell slot not known') end
+      if not ls.known then return refuse('linkshell slot not known') end
       if slot_name(ls.current, channel) ~= want then
         channel = OTHER_SLOT[channel]
-        if slot_name(ls.current, channel) ~= want then return ack(client, id, false, 'linkshell not equipped') end
+        if slot_name(ls.current, channel) ~= want then return refuse('linkshell not equipped') end
         command, text = chat.validate_send(channel, frame.target, send.text)
       end
     end
   end
   windower.send_command(command)
   remember_executed(id)
-  if send.opened then
-    local t = now_ms()
-    prune_sent(t)
-    app.e2e.sent[#app.e2e.sent + 1] = {clientId = frame.clientId, id = id, typedAt = t, ts = send.opened.ts}
-    write_keyfile()
-  end
+  record_send(send)
   local t = now()
   local echoes = live_echoes(t)
   echoes[#echoes + 1] = {channel = channel, target = channel == 'tell' and frame.target:lower() or nil,
@@ -982,7 +998,9 @@ end
 local function handle_send(client, frame)
   local id = frame.id
   if not is_send_id(id) then return end
-  if app.executed[id] or sent_record('id', id) then return ack(client, id, true) end
+  if app.executed[id] then return ack(client, id, true) end
+  local done = sent_record('id', id)
+  if done then return ack(client, id, done.error == nil, done.error) end
   local keys = app.e2e.keys
   local send = {frame = frame, text = frame.text}
   if keys then
