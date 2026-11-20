@@ -294,8 +294,27 @@ ws.log = log -- ws.lua's one-time notices, such as a TLS options fallback
 -- windower.console.
 local console = rawget(windower, 'console') or print
 
+-- The version the addon folder's main file holds now (vanatell.lua; on
+-- Ashita, main.lua): newer than this one once another box's update has put
+-- its files in place. -> 'X.Y.Z' | nil
+local MAIN_FILE = windower.addon_path .. (rawget(windower, 'platform') == 'ashita' and 'main.lua' or 'vanatell.lua')
+local function installed_version()
+  local f = io.open(MAIN_FILE, 'rb')
+  if not f then return nil end
+  local text = f:read('*a') or ''
+  f:close()
+  return text:match("_addon%.version%s*=%s*'(%d+%.%d+%.%d+)'")
+end
+
+local function file_exists(path)
+  local f = io.open(path, 'rb')
+  if f then f:close() end
+  return f ~= nil
+end
+
 -- The update check on load, //vt update and //vt rollback. Settings are
--- never among the files it writes.
+-- never among the files it writes. One box at a time updates the shared
+-- addon folder (update.lock in the shared folder).
 local updater = update.new{
   ws = ws,
   json = json,
@@ -312,10 +331,15 @@ local updater = update.new{
   fs = {dir_exists = windower.dir_exists, create_dir = windower.create_dir},
   sha256 = hooks.sha256,
   budget = hooks.hash_budget,
-  -- Keys held, or the relay said so (e2e_account): no rollback below encryption.
+  -- Keys held, or the relay said so (e2e_account), or any character's
+  -- account on this PC has switched (e2e.on): no rollback below encryption.
   switched = function()
     return app.e2e.keys ~= nil or (is_set(settings.e2e_account) and settings.e2e_account == settings.account_id)
+      or file_exists(E2E_ON)
   end,
+  lock_path = BASE_DIR .. 'update.lock',
+  holder = CHAR,
+  installed_version = installed_version,
 }
 hooks.updater = updater
 
@@ -712,6 +736,7 @@ local function finish_stage(j)
     set_recovery(k.keyId, e2e.b64url(k.recoverKey))
     settings.e2e_account = settings.account_id
     save()
+    mark_e2e()
   end
 end
 
@@ -1559,6 +1584,7 @@ local function on_message(client, text)
     if frame.switched == 1 and is_account_id(settings.account_id) and settings.e2e_account ~= settings.account_id then
       settings.e2e_account = settings.account_id
       save()
+      mark_e2e()
     end
     on_hello(client)
   elseif frame.type == 'send' then
@@ -1599,6 +1625,9 @@ local function refused(reason)
   end
   schedule_retry(reason)
   app.outage_said = true
+  -- Another character's box is updating the folder: nothing starts, and the
+  -- next refusal asks again (once it is done, this box reloads into its files).
+  if updater:locked() then return end
   local t = now()
   if app.auto_update_at and t - app.auto_update_at < AUTO_UPDATE_GAP then return end
   app.auto_update_at = t

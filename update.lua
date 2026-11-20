@@ -19,6 +19,10 @@ in this folder for what you may and may not do with it.
 -- inside the addon folder, and never data/ (the settings) or backup/. The
 -- network work and the hashing are pumped from prerender in bounded steps,
 -- so the game never waits on them.
+-- Several game instances can share one addon folder, so an update or a
+-- rollback holds a lock file in the shared folder while it runs: another
+-- box asking meanwhile starts nothing, and one that finds the folder already
+-- holds a newer version than its own reloads into it, downloading nothing.
 local update = {}
 
 local MAX_MANIFEST = 65536         -- bytes of latest.json
@@ -35,6 +39,8 @@ local NOTICE = BACKUP .. 'notice.txt'  -- what the next load says: "updated X.Y.
 -- Bytes hashed per prerender, a few milliseconds' work at most: on LuaJIT
 -- (Ashita), with LuaBitOp on Lua 5.1 (Windower), and with no bit library.
 local BUDGET_JIT, BUDGET_BIT, BUDGET_PURE = 65536, 8192, 1024
+local LOCK_STALE = 120 -- seconds after which a lock left behind (a game closed mid-update) is taken over
+local LOCKED = 'another character is updating. Try again in a minute.'
 
 -- The first version with encryption. Once the pairing's account has
 -- switched to encryption, //vt rollback never restores a version older than
@@ -178,8 +184,11 @@ U.__index = U
 -- cafile, command ('//vt'), log(line) (the chat log, prefixed), chat(text)
 -- (the chat log as it is), console(text), reload(), fs = {dir_exists(path),
 -- create_dir(path)}, switched() (true once the pairing's account has
--- switched to encryption: rollbacks below E2E_SINCE are refused), and for
--- tests sha256 (an implementation) and budget.
+-- switched to encryption: rollbacks below E2E_SINCE are refused),
+-- lock_path (the lock file in the shared folder; nil: no lock), holder (the
+-- character, written in the lock), installed_version() (the version the
+-- addon folder's main file holds now, or nil), and for tests sha256 (an
+-- implementation) and budget.
 function update.new(opts)
   local impl = opts.sha256 or sha256.impl()
   local budget = opts.budget
@@ -191,6 +200,8 @@ function update.new(opts)
     url = opts.manifest_url, cafile = opts.cafile, command = opts.command or '//vt',
     log = opts.log, chat = opts.chat, console = opts.console, reload_addon = opts.reload, fs = opts.fs or {},
     switched = opts.switched,
+    lock_path = opts.lock_path, holder = opts.holder, installed_version = opts.installed_version,
+    locked_by_me = nil, -- the lock file's text while this box holds it
     impl = impl, budget = budget,
     req = nil,     -- the request in flight
     job = nil,     -- {kind = 'check' | 'update', ...} while one runs
@@ -239,6 +250,53 @@ function U:manifest(status, body)
   return update.parse_manifest(body, self.json, self.platform)
 end
 
+---------------------------------------------------------------------------
+-- The lock: '<os.time()> <Name>' in lock_path while a box updates or rolls
+-- back.
+---------------------------------------------------------------------------
+-- True while another character's box holds a lock younger than LOCK_STALE.
+-- A lock of this character's, or an older or unreadable one, is not held.
+function U:locked()
+  if not self.lock_path or self.locked_by_me then return false end
+  local text = read_file(self.lock_path)
+  if not text then return false end
+  local at, who = text:match('^(%d+) (%S+)')
+  at = tonumber(at)
+  if not at or who == self.holder then return false end
+  local age = os.time() - at
+  return age >= 0 and age < LOCK_STALE
+end
+
+-- -> true once this box holds the lock: written to update.lock.<Name>, then
+-- renamed to update.lock, which fails while another box's is there (the
+-- rename will not replace a file on Windows); read back to be sure.
+function U:take_lock()
+  if not self.lock_path then return true end
+  if self.locked_by_me then return true end
+  if self:locked() then return false end
+  os.remove(self.lock_path) -- this character's own, or one left behind
+  local text = tostring(os.time()) .. ' ' .. tostring(self.holder)
+  local tmp = self.lock_path .. '.' .. tostring(self.holder)
+  if not write_file(tmp, text) then
+    os.remove(tmp)
+    return false
+  end
+  if not os.rename(tmp, self.lock_path) then
+    os.remove(tmp)
+    return false
+  end
+  if read_file(self.lock_path) ~= text then return false end
+  self.locked_by_me = text
+  return true
+end
+
+-- Removes the lock, if it is still this box's.
+function U:release_lock()
+  local mine = self.locked_by_me
+  self.locked_by_me = nil
+  if mine and read_file(self.lock_path) == mine then os.remove(self.lock_path) end
+end
+
 -- Load: the line the last update or rollback left, then the check is due.
 function U:on_load()
   local path = self.dir .. NOTICE
@@ -255,6 +313,7 @@ end
 function U:on_unload()
   self:cancel()
   self.job = nil
+  self:release_lock()
 end
 
 -- Every prerender: the load check once (unless a command came first), the
@@ -292,16 +351,19 @@ end
 function U:fail(job, why)
   if self.job ~= job then return end
   self.job = nil
+  self:release_lock()
   self:say('VanaTell: update failed: ' .. tostring(why) .. '; still on ' .. tostring(self.version))
 end
 
 -- //vt update: opts = {before_reload = fn()}, which runs once the new files
 -- are in place, just before the reload. The update the connection starts
 -- when the relay requires one adds auto = true and on_none = fn(): it says
--- nothing when it cannot start (an update running, reloading, updates off)
--- and skips checking for updates..., as the connection has said why it runs,
--- and on_none replaces already up to date. Its other lines are those of
--- //vt update.
+-- nothing when it cannot start (an update running, reloading, updates off,
+-- another box updating) and skips checking for updates..., as the
+-- connection has said why it runs, and on_none replaces already up to date.
+-- Its other lines are those of //vt update. Another box's update already
+-- put a newer version in the folder: it reloads into it at once, as an
+-- update's reload does, with nothing downloaded or backed up.
 function U:run_update(opts)
   opts = opts or {}
   local auto = opts.auto
@@ -309,6 +371,14 @@ function U:run_update(opts)
   if self.reloading then return cannot('reloading...') end
   if self.job and self.job.kind == 'update' then return cannot('an update is already in progress') end
   if not self.url then return cannot('updates are off in this build') end
+  if not self:take_lock() then return cannot(LOCKED) end
+  local installed = self.installed_version and self.installed_version()
+  if installed and update.newer(installed, self.version) then
+    self:cancel()
+    self.job = nil
+    self:release_lock()
+    return self:reload('updated ' .. installed, installed, opts.before_reload)
+  end
   self:cancel()
   self.due = false -- this asks anyway
   local job = {kind = 'update', need = {}, index = 1, downloaded = {}, before_reload = opts.before_reload}
@@ -319,6 +389,7 @@ function U:run_update(opts)
     if not m then return self:fail(job, why) end
     if not update.newer(m.version, self.version) then
       self.job = nil
+      self:release_lock()
       if auto then
         if opts.on_none then opts.on_none() end
         return
@@ -509,6 +580,7 @@ function U:install(job)
   ok, err = self:put_files(job.downloaded, old)
   if not ok then return self:fail(job, err) end
   self.job = nil
+  self:release_lock()
   self.log('installing ' .. version .. ', reloading')
   self:reload('updated ' .. version, version, job.before_reload)
 end
@@ -527,20 +599,28 @@ function U:rollback()
     return self.log("can't roll back to " .. rec.version .. ': encryption is on, and that version has no encryption. '
       .. self.command .. ' update installs the newest.')
   end
+  if not self:take_lock() then return self.log(LOCKED) end
   local dir, files, old = self.dir, {}, {}
   for _, path in ipairs(rec.files) do
     local data = read_file(dir .. BACKUP .. path)
-    if not data then return self:say('VanaTell: rollback failed: the backup of ' .. path .. ' is missing') end
+    if not data then
+      self:release_lock()
+      return self:say('VanaTell: rollback failed: the backup of ' .. path .. ' is missing')
+    end
     files[#files + 1] = {path = path, data = data}
     old[path] = read_file(dir .. path)
   end
   local ok, err = self:put_files(files, old)
-  if not ok then return self:say('VanaTell: rollback failed: ' .. err .. '; the files are as they were') end
+  if not ok then
+    self:release_lock()
+    return self:say('VanaTell: rollback failed: ' .. err .. '; the files are as they were')
+  end
   for _, path in ipairs(rec.added) do os.remove(dir .. path) end
   for _, path in ipairs(rec.files) do os.remove(dir .. BACKUP .. path) end
   os.remove(dir .. RECORD)
   self:cancel()
   self.job = nil
+  self:release_lock()
   self.log('restoring ' .. rec.version .. ', reloading')
   self:reload('rolled back ' .. rec.version, rec.version)
 end
