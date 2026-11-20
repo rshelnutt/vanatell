@@ -843,10 +843,10 @@ local function resend_kx()
   end
 end
 
--- The socket URL: whether this addon can encrypt, its key id, and the key
--- id of the recovery key it holds when it has no keys.
+-- The socket URL: the character, whether this addon can encrypt, its key
+-- id, and the key id of the recovery key it holds when it has no keys.
 local function socket_url()
-  local url = RELAY_URL .. '/v1/ws?role=addon'
+  local url = RELAY_URL .. '/v1/ws?role=addon&character=' .. CHAR
   if not pool then return url end
   local s = app.e2e
   local recover = (not s.keys and recovery()) or ''
@@ -1694,7 +1694,7 @@ local function start()
 end
 
 ---------------------------------------------------------------------------
--- Pairing: trades the code shown on the phone for this addon's token.
+-- Pairing: trades the code shown on the phone for this character's token.
 ---------------------------------------------------------------------------
 -- wss://host -> https://host/v1/pair; ws://host -> http://host/v1/pair
 local function pair_url(url)
@@ -1754,7 +1754,7 @@ local HELP = {
   '//vt pair <code> - pair with the code shown on your device',
   '//vt status - show the connection state',
   '//vt on | //vt off - start or stop relaying',
-  "//vt unpair - forget this addon's relay token",
+  "//vt unpair - forget this character's relay token",
   '//vt update - install the newest version, if there is one',
   '//vt rollback - go back to the version before the last update',
   '//vt help - show this list',
@@ -1789,7 +1789,7 @@ function commands.pair(code)
   local req, err
   req, err = ws.http_post{
     url = pair_url(RELAY_URL),
-    body = json.encode({code = code}),
+    body = encode_fields{{'code', code}, {'character', CHAR}},
     cafile = CA_FILE,
     on_done = function(status, body)
       if req ~= app.pairing then return end
