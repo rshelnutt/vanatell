@@ -69,12 +69,39 @@ local LS_LOOKUP = {'input /lsmes', 'input /ls2mes'}
 
 local PING = '{"type":"ping"}'
 local CA_FILE = windower.addon_path .. 'relay-roots.txt'
--- The folder of the settings: data/ on Windower, config/addons/vanatell/ on Ashita.
-local DATA_DIR = rawget(windower, 'data_dir') or (windower.addon_path .. 'data/')
-local QUEUE_FILE = DATA_DIR .. 'queue.json' -- the queue, only across an update's or a rollback's reload
+-- The shared folder: data/ on Windower, config/addons/vanatell/ on Ashita.
+-- Each character has its own folder in it, holding that character's
+-- settings, key file, queue and entropy seed, so several game instances can
+-- share one addon folder.
+local BASE_DIR = rawget(windower, 'data_dir') or (windower.addon_path .. 'data/')
+
+local function reload() windower.send_command('lua reload ' .. _addon.name) end
+
+-- The character logged in when the addon loaded. Loaded before login (the
+-- title screen), the addon opens no socket, writes nothing and runs no
+-- command; at login it reloads, for that character.
+local CHAR = (windower.ffxi.get_player() or {}).name
+if type(CHAR) ~= 'string' or not CHAR:find('^[A-Za-z]+$') then CHAR = nil end
+if not CHAR then
+  windower.register_event('login', reload)
+  windower.register_event('addon command', function()
+    windower.add_to_chat(207, 'VanaTell: log in to a character first.')
+  end)
+  return
+end
+local CHAR_DIR = BASE_DIR .. CHAR .. '/'
+-- As Windower's config library takes it: relative to the addon folder.
+local SETTINGS_PATH = 'data/' .. CHAR .. '/settings.xml'
+local QUEUE_FILE = CHAR_DIR .. 'queue.json' -- the queue, only across an update's or a rollback's reload, or a character change
 local QUEUE_SINCE = '0.3.9' -- the first version that reads queue.json back
 -- This pairing's encryption keys, and the exchange in progress (the key file).
-local KEY_FILE = DATA_DIR .. 'e2e.json'
+local KEY_FILE = CHAR_DIR .. 'e2e.json'
+-- The shared folder, then this character's, when missing.
+local function ensure_data_dir()
+  if not windower.dir_exists(BASE_DIR) then pcall(windower.create_dir, BASE_DIR) end
+  if not windower.dir_exists(CHAR_DIR) then pcall(windower.create_dir, CHAR_DIR) end
+end
+
 -- What the newest version is and which files it holds (update.lua).
 local UPDATE_URL = 'https://vanatell.com/addon/latest.json'
 
@@ -92,8 +119,9 @@ local RELAY_URL = hooks.relay_url or 'wss://relay.vanatell.com'
 -- key is written.
 -- e2e_account: the account this PC knows has switched to encryption
 -- (rollbacks below encryption are refused for it).
-local settings = config.load({token = '', account_id = '', enabled = true, ls_slots = '', recover_key = '',
-                              recover_key_id = '', e2e_account = ''})
+ensure_data_dir()
+local settings = config.load(SETTINGS_PATH, {token = '', account_id = '', enabled = true, ls_slots = '', recover_key = '',
+                                             recover_key_id = '', e2e_account = ''})
 for _, key in ipairs({'ls_slots', 'recover_key', 'recover_key_id', 'e2e_account'}) do
   if type(settings[key]) ~= 'string' then settings[key] = '' end
 end
@@ -129,6 +157,7 @@ local app = {
     waited = {},       -- kxId -> true: answered with wait
     seq = 0,           -- lines sealed since load
   },
+  switching = false,   -- another character logged in: the reload for it was asked for
   auto_update_at = nil, -- when the relay's refusal last started an update
   forced_said = false, -- the refusal's updating line was logged since load
   no_bit_said = false, -- the refusal's no bit library line was logged since load
@@ -217,7 +246,7 @@ local updater = update.new{
   log = log,
   chat = function(text) windower.add_to_chat(207, (text:gsub('[^ -~]', '?'))) end,
   console = console,
-  reload = function() windower.send_command('lua reload ' .. _addon.name) end,
+  reload = reload,
   fs = {dir_exists = windower.dir_exists, create_dir = windower.create_dir},
   sha256 = hooks.sha256,
   budget = hooks.hash_budget,
@@ -253,7 +282,7 @@ local function encode_fields(fields)
 end
 
 ---------------------------------------------------------------------------
--- The key file: data/e2e.json (Ashita: config/addons/vanatell/e2e.json).
+-- The key file: data/<Name>/e2e.json (Ashita: config/addons/vanatell/<Name>/e2e.json).
 ---------------------------------------------------------------------------
 -- It holds the account it belongs to, this pairing's keys once an exchange
 -- has completed, the exchange in progress (so a reload or a closed game
@@ -409,10 +438,6 @@ local function read_keyfile()
   return file
 end
 
-local function ensure_data_dir()
-  if not windower.dir_exists(DATA_DIR) then pcall(windower.create_dir, DATA_DIR) end
-end
-
 -- What app.e2e holds, as the key file: keys in a fixed order.
 local function write_keyfile()
   local s = app.e2e
@@ -477,7 +502,7 @@ if e2e.available() then
     now = now,
     events = {register = windower.register_event, unregister = windower.unregister_event},
     system = rawget(windower, 'system_random'),
-    seed_path = DATA_DIR .. 'entropy.seed',
+    seed_path = CHAR_DIR .. 'entropy.seed',
     sha256 = sha256,
     start_values = start_values,
     clocks = {os.clock, now},
@@ -838,7 +863,7 @@ local function write_queue()
     os.remove(QUEUE_FILE .. '.tmp')
     return
   end
-  if not windower.dir_exists(DATA_DIR) then pcall(windower.create_dir, DATA_DIR) end
+  ensure_data_dir()
   local frames = {}
   for i, frame in ipairs(app.queue) do frames[i] = json.encode(frame) end
   write_through(QUEUE_FILE, '{"v":1,"frames":[' .. table.concat(frames, ',') .. ']}')
@@ -1711,6 +1736,7 @@ end
 
 function commands.status()
   log('version: ' .. _addon.version)
+  log('character: ' .. CHAR)
   if is_token(settings.token) then
     log('paired: yes (account ' .. (is_set(settings.account_id) and settings.account_id or 'unknown') .. ')')
   else
@@ -1785,6 +1811,8 @@ windower.register_event('unload', function()
   cancel_pairing()
   if updater.reloading then
     if update.newer(QUEUE_SINCE, updater.reload_version) then os.remove(QUEUE_FILE) else write_queue() end
+  elseif app.switching then
+    write_queue()
   end
   updater:on_unload()
   if pool then pool:on_unload() end
@@ -1900,7 +1928,15 @@ windower.register_event('incoming chunk', function(id, data)
   end
 end)
 
-windower.register_event('login', function()
+-- Another character logging in on this instance: its queue goes to the old
+-- character's queue.json, and the addon reloads for the new one.
+windower.register_event('login', function(name)
+  local who = type(name) == 'string' and name ~= '' and name or player_name()
+  if who and who:lower() ~= CHAR:lower() then
+    write_queue()
+    app.switching = true
+    return reload()
+  end
   watch_linkshells()
   check_linkshells_in('zone', LS_ZONE_SETTLE)
 end)
