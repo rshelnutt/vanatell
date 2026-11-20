@@ -19,11 +19,10 @@ in this folder for what you may and may not do with it.
 --              vanatell after //vt update or //vt rollback
 --   game data  the player from party and player memory, the bags from
 --              inventory memory, linkshell names and colours from item data
---   settings   one file for this install: config/addons/vanatell/settings.json
---              under the Ashita folder, so every character shares one pairing,
---              saved through a temporary file and a rename; the key file
---              (e2e.json), the entropy seed and queue.json (across an update's
---              reload) sit beside it
+--   settings   one file per character: config/addons/vanatell/<Name>/settings.json
+--              under the Ashita folder, saved through a temporary file and a
+--              rename; that character's key file (e2e.json), entropy seed and
+--              queue.json (across an update's reload) sit beside it
 --   TLS        Ashita ships LuaSec as socket.ssl; the addon asks for ssl
 --   files      ashita.fs for the folders an update writes (backup/, assets/)
 --   randomness Windows' own generator for the addon's private keys, through
@@ -219,27 +218,41 @@ local function settings_dir()
 end
 
 local SETTINGS_DIR = settings_dir()
-local SETTINGS_FILE = SETTINGS_DIR .. 'settings.json'
 
 local config = {}
 
+-- Windower's config path -> the settings file under SETTINGS_DIR, and the
+-- same path as the log shows it. 'data/<rest>.xml' (data/Kupo/settings.xml)
+-- is SETTINGS_DIR .. '<rest>.json' (Kupo/settings.json); no path is
+-- settings.json in SETTINGS_DIR itself.
+local function settings_file(path)
+  local rest = type(path) == 'string' and path:match('^data/(.+)$') or 'settings.xml'
+  rest = rest:gsub('%.xml$', '.json')
+  return SETTINGS_DIR .. rest, 'config/addons/' .. addon.name .. '/' .. rest
+end
+
+local loaded_from = setmetatable({}, {__mode = 'k'}) -- settings table -> the config path it was loaded from
+
 -- config.load([path,] defaults): the defaults, with the value saved for each
--- of their keys. A missing or unreadable file gives the defaults. A save
--- interrupted after settings.json was removed leaves settings.json.tmp,
--- which a load then takes; one left beside settings.json is stale and goes.
+-- of their keys, from the file for path. A missing or unreadable file gives
+-- the defaults. A save interrupted after settings.json was removed leaves
+-- settings.json.tmp, which a load then takes; one left beside settings.json
+-- is stale and goes.
 function config.load(path, defaults)
-  if type(path) ~= 'string' then defaults = path end
+  if type(path) ~= 'string' then path, defaults = nil, path end
   local settings = {}
   for k, v in pairs(defaults or {}) do settings[k] = v end
-  local tmp = SETTINGS_FILE .. '.tmp'
-  local f = io.open(SETTINGS_FILE, 'rb')
+  local file = settings_file(path)
+  loaded_from[settings] = path
+  local tmp = file .. '.tmp'
+  local f = io.open(file, 'rb')
   if f then
     os.remove(tmp)
   else
     f = io.open(tmp, 'rb')
     if f then
       f:close()
-      if os.rename(tmp, SETTINGS_FILE) then f = io.open(SETTINGS_FILE, 'rb') else f = io.open(tmp, 'rb') end
+      if os.rename(tmp, file) then f = io.open(file, 'rb') else f = io.open(tmp, 'rb') end
     end
   end
   if f then
@@ -270,7 +283,7 @@ local function tmp_in_place(path, tmp)
   return os.rename(tmp, path) and true or false
 end
 
--- Every save is for all characters: there is one file per Ashita folder.
+-- A save goes to the file the settings were loaded from: one per character.
 -- It goes to settings.json.tmp first, then is renamed over settings.json
 -- (Windows will not rename onto an existing file, so that goes first), so
 -- the token and the recovery key are never left half written. A failed
@@ -286,21 +299,25 @@ function config.save(settings)
   table.sort(keys)
   local parts = {}
   for i, k in ipairs(keys) do parts[i] = json.encode(k) .. ':' .. json.encode(settings[k]) end
+  local file, shown = settings_file(loaded_from[settings])
   local mkdir = ashita.fs.create_directory or ashita.fs.create_dir
-  if not ashita.fs.exists(SETTINGS_DIR) then mkdir(SETTINGS_DIR) end
-  local tmp = SETTINGS_FILE .. '.tmp'
-  if tmp_in_place(SETTINGS_FILE, tmp) then
+  local folder_of = file:match('^(.*[\\/])')
+  for _, dir in ipairs({SETTINGS_DIR, folder_of}) do
+    if not ashita.fs.exists(dir) then mkdir(dir) end
+  end
+  local tmp = file .. '.tmp'
+  if tmp_in_place(file, tmp) then
     local f = io.open(tmp, 'wb')
     local written = f and f:write('{' .. table.concat(parts, ',') .. '}\n')
     if f then f:close() end
     if written then
-      os.remove(SETTINGS_FILE)
-      if os.rename(tmp, SETTINGS_FILE) then return true end
+      os.remove(file)
+      if os.rename(tmp, file) then return true end
     else
       os.remove(tmp)
     end
   end
-  add_to_chat(207, 'VanaTell: could not save settings to config/addons/vanatell/settings.json')
+  add_to_chat(207, 'VanaTell: could not save settings to ' .. shown)
   return false
 end
 
@@ -463,7 +480,7 @@ windower = {
   platform = 'ashita',
   dir_exists = function(path) return ashita.fs.exists(path) end,
   create_dir = function(path) return (ashita.fs.create_directory or ashita.fs.create_dir)(path) end,
-  data_dir = SETTINGS_DIR, -- queue.json, e2e.json and entropy.seed beside settings.json, never in the addon folder
+  data_dir = SETTINGS_DIR, -- each character's folder, never in the addon folder
   system_random = system_random,
 }
 _addon = {}
