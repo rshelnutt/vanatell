@@ -166,6 +166,11 @@ function chat.validate_send(channel, target, text)
   if type(text) ~= 'string' then return nil, 'invalid text' end
   text = text:gsub('[\r\n\t]+', ' ')
   text = text:gsub('[%z\1-\31\127]', '')
+  -- A phone keyboard's curly quotes and dash (iPhone Smart Punctuation) go in
+  -- as ' " -: the game has them only as double-width marks.
+  text = text:gsub('\226\128[\152\153]', "'")
+  text = text:gsub('\226\128[\156\157]', '"')
+  text = text:gsub('\226\128\148', '-')
   text = text:gsub(';', ',')
   text = trim(text)
   if text == '' then return nil, 'empty text' end
