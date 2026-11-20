@@ -47,7 +47,7 @@ Say, shout, yell, emotes and system messages stay in game.
 - **Little kept, deleted on request.** The server keeps the newest 2,000 lines per character so your device can catch up. **Unpair this device** in the app deletes your account and everything stored, at once, though for 30 days a copy still exists in Cloudflare's point-in-time recovery of the relay's storage, which the relay cannot erase.
 - **No tracking.** No analytics, ads, trackers or third-party SDKs, in the addon or the apps.
 - **Read it yourself.** Every line of this addon is here in plain Lua. `//vt update` checks each file's SHA-256 against the published list before installing it. An update the addon makes by itself when the relay requires one is checked the same way.
-- **Your chat text is encrypted.** When both the addon and the app are updated, the addon encrypts the text of every tell, party and linkshell line on your PC before it leaves, and only your device can decrypt it; what you type on the device is encrypted on the device, and only the addon can decrypt it. `//vt status` (on Ashita, `/vt status`) shows `encryption: on` when it is. Compare the safety code once (below): until you do, a relay could have put itself in the middle when encryption was set up, and the points below that say "only" depend on that check.
+- **Your chat text is encrypted.** When both the addon and the app are updated, the addon encrypts the text of every tell, party and linkshell line on your PC before it leaves, and only your device can decrypt it; what you type on the device is encrypted on the device, and only the addon can decrypt it. `//vt status` (on Ashita, `/vt status`) shows `encryption: on` when it is. Compare the safety code once for each character (below): until you do, a relay could have put itself in the middle when encryption was set up, and the points below that say "only" depend on that check.
 - **The keys stay on your PC and your device.** Each side makes its own key; only the public halves cross the relay. On Ashita the addon's key comes from Windows' system random generator. On Windower, which gives addons no system random source, the addon makes it from the timing of its own frames against your PC's clock and from the timing and content of the game's traffic and your mouse and keyboard input, none of which reaches the relay, and stops once encryption is on. On iPhone, notification text is decrypted on the device by the app's notification extension.
 - **Check that no one is in between.** `//vt status` (on Ashita, `/vt status`) shows a safety code, and the app shows one in **Settings → Encryption**. Each character has its own: compare `//vt status` on each character with the app's code while that character is selected at the top of Home. If they match, your PC and device are talking only to each other. The keys change when you pair again, or when the addon replaces a lost key file using the recovery key it keeps with its pairing; the app then says the safety code changed. After you pair again, compare the new code: the app sets up encryption on the relay's report that you paired, so a relay could report a pairing you did not make. If it did, the app's code changes while the code in game stays the same.
 - **Encryption can be held back, but not faked.** Until it turns on, and again after you pair again until it turns on again, the relay could keep it from turning on. If the app says your addon needs an update, or says it is still setting up, while `//vt status` (on Ashita, `/vt status`) says it is waiting for the app, encryption is being blocked.
@@ -118,7 +118,7 @@ To pair a character again later, open **Settings → Characters** in the app and
 | Windower | Ashita | What it does |
 | --- | --- | --- |
 | `//vt pair CODE` | `/vt pair CODE` | Pair with the code shown in the app |
-| `//vt status` | `/vt status` | Show the version, pairing, connection, queued messages and linkshells |
+| `//vt status` | `/vt status` | Show the version, character, pairing, connection, queued messages and linkshells |
 | `//vt on` / `//vt off` | `/vt on` / `/vt off` | Start or stop relaying |
 | `//vt unpair` | `/vt unpair` | Forget this character's pairing |
 | `//vt update` | `/vt update` | Install the newest version, if there is one, and reload |
@@ -129,6 +129,7 @@ To pair a character again later, open **Settings → Characters** in the app and
 
 ```
 VanaTell: version: X.Y.Z
+VanaTell: character: Kupo
 VanaTell: paired: yes (account ...)
 VanaTell: enabled: yes
 VanaTell: connection: connected
@@ -177,7 +178,7 @@ To update by hand instead, download the zip from [Releases](../../releases) as i
 - On Ashita that file is `config/addons/vanatell/<character>/settings.json` in the Ashita folder, one folder for each character. Treat it like a password too. `/vt unpair` wipes the token.
 - `addons/vanatell/data/<character>/e2e.json` (on Ashita, `config/addons/vanatell/<character>/e2e.json`) holds that character's encryption keys. Treat it like a password. `//vt unpair` wipes it. The settings file also keeps a recovery key, so a lost `e2e.json` can be replaced without pairing again.
 - `entropy.seed`, next to it, holds only a hash used to make future keys quickly.
-- Lines that arrive while the relay is out of reach wait in memory, up to 500. They are written to disk only for the seconds the reload of an update or a rollback takes, in `addons/vanatell/data/<character>/queue.json` (on Ashita, `config/addons/vanatell/<character>/queue.json`), then read back and deleted.
+- Lines that arrive while the relay is out of reach wait in memory, up to 500. They are written to disk only for the seconds the reload of an update or a rollback takes, or, when another character logs in on the same game, until this character logs in again, in `addons/vanatell/data/<character>/queue.json` (on Ashita, `config/addons/vanatell/<character>/queue.json`), then read back and deleted.
 
 Everything travels over an encrypted connection, and the addon checks the relay's certificate, and vanatell.com's for updates, against the small list of trust roots in `relay-roots.txt`. That file is not a certificate to install; it is only read by the addon.
 
@@ -201,7 +202,7 @@ Everything travels over an encrypted connection, and the addon checks the relay'
 
 **Status shows `linkshells: Regalia, MyPearl (slots not known yet)`.** The game has not said which slot each shell is in. The addon asked with `/lsmes` and `/ls2mes` and got no reply, which happens when neither linkshell has a message set. Until the game says, linkshell lines arrive in the app under "Unknown linkshell" and a reply to a linkshell from the device fails rather than go to the wrong one. Zone or equip a shell again and the lines move to the right linkshell.
 
-**`relay rejected the addon token`.** This PC's pairing was replaced or revoked. Get a new code in the app and type `//vt pair CODE` (on Ashita, `/vt pair CODE`).
+**`relay rejected the addon token`.** This character's pairing was replaced or revoked. Get a new code in the app and type `//vt pair CODE` (on Ashita, `/vt pair CODE`).
 
 **Something else?** Ask in #help on the [VanaTell Discord](https://discord.gg/xfAJzhhN6D), or report it with **Report a bug** in #bug-reports.
 
