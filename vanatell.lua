@@ -101,6 +101,65 @@ local function ensure_data_dir()
   if not windower.dir_exists(BASE_DIR) then pcall(windower.create_dir, BASE_DIR) end
   if not windower.dir_exists(CHAR_DIR) then pcall(windower.create_dir, CHAR_DIR) end
 end
+-- In the shared folder: an account on this PC has switched to encryption
+-- (rollbacks below encryption are refused for every character).
+local E2E_ON = BASE_DIR .. 'e2e.on'
+
+local function mark_e2e()
+  local f = io.open(E2E_ON, 'rb')
+  if f then return f:close() end
+  f = io.open(E2E_ON, 'wb')
+  if f then f:close() end
+end
+
+-- The pairing this PC had before characters had folders: the settings,
+-- e2e.json, queue.json and entropy.seed in the shared folder itself. It
+-- moves to a character its ls_slots name ('Name/bag:slot=n,...;Name/...'),
+-- or, when they name none, to the first character to load. The settings
+-- file goes first, by a rename, which fails once another box has moved it;
+-- that box then has the pairing, and this one stays unpaired and moves
+-- nothing else. -> true when this character took it
+local SETTINGS_NAME = rawget(windower, 'platform') == 'ashita' and 'settings.json' or 'settings.xml'
+local LEGACY_FILES = {'e2e.json', 'queue.json', 'entropy.seed'}
+
+local function legacy_names(text)
+  local slots
+  if SETTINGS_NAME == 'settings.json' then
+    local ok, t = pcall(json.decode, text)
+    slots = ok and type(t) == 'table' and t.ls_slots
+  else
+    slots = text:match('<ls_slots>(.-)</ls_slots>')
+    slots = slots and slots:gsub('^%s*<!%[CDATA%[(.-)%]%]>%s*$', '%1')
+  end
+  local names = {}
+  for entry in (type(slots) == 'string' and slots or ''):gmatch('[^;]+') do
+    local name = entry:match('^%s*([^/]+)/')
+    if name then names[#names + 1] = name:lower() end
+  end
+  return names
+end
+
+local function claim_legacy()
+  local old, mine = BASE_DIR .. SETTINGS_NAME, CHAR_DIR .. SETTINGS_NAME
+  local f = io.open(mine, 'rb')
+  if f then
+    f:close()
+    return false
+  end
+  f = io.open(old, 'rb')
+  if not f then return false end
+  local text = f:read('*a') or ''
+  f:close()
+  local names = legacy_names(text)
+  if #names > 0 then
+    local named = false
+    for _, name in ipairs(names) do named = named or name == CHAR:lower() end
+    if not named then return false end
+  end
+  if not os.rename(old, mine) then return false end
+  for _, name in ipairs(LEGACY_FILES) do os.rename(BASE_DIR .. name, CHAR_DIR .. name) end
+  return true
+end
 
 -- What the newest version is and which files it holds (update.lua).
 local UPDATE_URL = 'https://vanatell.com/addon/latest.json'
@@ -120,12 +179,15 @@ local RELAY_URL = hooks.relay_url or 'wss://relay.vanatell.com'
 -- e2e_account: the account this PC knows has switched to encryption
 -- (rollbacks below encryption are refused for it).
 ensure_data_dir()
+local claimed = claim_legacy()
 local settings = config.load(SETTINGS_PATH, {token = '', account_id = '', enabled = true, ls_slots = '', recover_key = '',
                                              recover_key_id = '', e2e_account = ''})
 for _, key in ipairs({'ls_slots', 'recover_key', 'recover_key_id', 'e2e_account'}) do
   if type(settings[key]) ~= 'string' then settings[key] = '' end
 end
 settings.url = nil
+-- The pairing moved had switched to encryption.
+if claimed and settings.e2e_account ~= '' and settings.e2e_account == settings.account_id then mark_e2e() end
 
 -- state: unpaired | disabled | waiting | connecting | open | unauthorized | stopped
 local app = {
@@ -1794,6 +1856,7 @@ commands.help = show_help
 -- rollback, the version it reloaded into is said in both.
 windower.register_event('load', function()
   pcall(console, 'VanaTell ' .. _addon.version .. ' loaded')
+  if claimed and has_credentials() then log("this PC's pairing is now " .. CHAR .. "'s.") end
   updater:on_load()
   read_queue()
   load_keys()
