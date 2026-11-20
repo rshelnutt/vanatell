@@ -36,6 +36,12 @@ The zips, as the tool builds them:
 
 ## [Unreleased]
 
+### Fixed
+
+- A line sent from the iPhone with Smart Punctuation on goes into the game with plain ' " and -: the keyboard's
+  curly quotes and long dash (‘ ’ “ ” —) were typed as the game's double-width marks, so an apostrophe showed as `
+  followed by a space.
+
 ## [0.4.1] - 2026-11-17
 
 ### Changed
