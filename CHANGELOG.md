@@ -36,6 +36,28 @@ The zips, as the tool builds them:
 
 ## [Unreleased]
 
+### Added
+
+- Several characters on one device: each one pairs with the same code from the app, with `//vt pair CODE` (on Ashita,
+  `/vt pair CODE`) typed on each character, on one PC or several.
+- One folder for each character: `data/<character>/` (on Ashita, `config/addons/vanatell/<character>/`) holds that
+  character's settings, key file, queue and entropy seed, so game instances that share one addon folder each keep their
+  own pairing.
+- This PC's existing pairing moves to the character it was used with, and the game log says so, for example
+  `VanaTell: this PC's pairing is now Kupo's.`
+- One box updates and the others reload into it. While one character updates, `//vt update` on another says
+  `VanaTell: another character is updating. Try again in a minute.`
+
+### Changed
+
+- The addon connects once a character is logged in. Before that, every command says
+  `VanaTell: log in to a character first.`
+- `//vt status` (on Ashita, `/vt status`) names the character, for example `character: Kupo`, after the version line.
+- `//vt unpair` (on Ashita, `/vt unpair`) forgets only this character's pairing, and `//vt help` says
+  `//vt unpair - forget this character's relay token`.
+- Once encryption is on for any character on this PC, `//vt rollback` (on Ashita, `/vt rollback`) will not go back to
+  a version without encryption on any of them.
+
 ## [0.4.1] - 2026-11-17
 
 ### Changed
