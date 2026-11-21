@@ -36,6 +36,8 @@ The zips, as the tool builds them:
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-11-20
+
 ### Added
 
 - Several characters on one device: each one pairs with the same code from the app, with `//vt pair CODE` (on Ashita,
@@ -271,7 +273,8 @@ The zips, as the tool builds them:
 - Case-insensitive pair codes: upper or lower case both work, and dashes or
   spaces copied from the phone are ignored.
 
-[Unreleased]: https://github.com/rshelnutt/vanatell/compare/v0.4.1...HEAD
+[Unreleased]: https://github.com/rshelnutt/vanatell/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/rshelnutt/vanatell/compare/v0.4.1...v0.5.0
 [0.4.1]: https://github.com/rshelnutt/vanatell/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/rshelnutt/vanatell/compare/v0.3.9...v0.4.0
 [0.3.9]: https://github.com/rshelnutt/vanatell/compare/v0.3.8...v0.3.9
