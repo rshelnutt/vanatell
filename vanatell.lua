@@ -868,13 +868,16 @@ end
 -- when it has not said: a line is never named by a guess. Party lines are
 -- group lines like linkshell lines (a sender, a null target) but, like
 -- tells, have no linkshell key. The first line sent with no name while
--- shells are equipped is remembered by its time (ts, in ms): once the game
--- says where those shells are, the relay is told to name the lines from
--- that time on.
+-- shells are equipped, or before the first read after load or login, is
+-- remembered by its time (ts, in ms): once the game says where those shells
+-- are, the relay is told to name the lines from that time on.
 local function linkshell_name(channel, ts)
   if channel ~= 'ls1' and channel ~= 'ls2' then return nil end
   local ls = app.ls
-  if not ls.current then return NULL end
+  if not ls.current then
+    if not ls.unnamed_from then ls.unnamed_from = ts end
+    return NULL
+  end
   if not ls.known then
     if not ls.unnamed_from and ls.found and #ls.found > 0 then ls.unnamed_from = ts end
     return NULL
@@ -1249,7 +1252,8 @@ end
 
 -- The linkshells equipped now, then the equipped items they were read from
 -- (linkshells.equipped), or nil while the game data cannot be read (not
--- logged in, or the inventory not loaded yet, say).
+-- logged in, or the inventory or the bag a shell is worn from not loaded
+-- yet, say).
 local function read_linkshells()
   local ok, state, found = pcall(function()
     local player = windower.ffxi.get_player()
@@ -1263,6 +1267,10 @@ local function read_linkshells()
       if next(app.ls.equips) == nil then app.ls.equips = linkshells.load_equips(settings.ls_slots, player.name) end
     end
     local found = linkshells.equipped(player, items, extdata.decode, app.ls.equips)
+    -- After login or zone-in, a shell worn from the Mog Satchel, Sack or Case
+    -- is missing until that bag loads, after the inventory: until every slot
+    -- the game named holds its shell, the read does not count.
+    if now() < app.ls.watch_until and not linkshells.equips_loaded(found, app.ls.equips) then return nil end
     return linkshells.assign(found, player, app.ls.equips), found
   end)
   if ok and state then return state, found end

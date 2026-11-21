@@ -145,6 +145,20 @@ function M.inventory_loaded(bags)
   return false
 end
 
+-- True when every bag slot the game named for a shell (equips: 'bag:slot' ->
+-- 1 or 2) holds an equipped shell in found = M.equipped(...). After a
+-- zone-in the Mog Satchel, Sack and Case load after the inventory: until
+-- they have, a shell worn from one of them is not there to read.
+function M.equips_loaded(found, equips)
+  if type(equips) ~= 'table' then return true end
+  local held = {}
+  for _, f in ipairs(type(found) == 'table' and found or {}) do held[f.key] = true end
+  for key, n in pairs(equips) do
+    if SLOT[n] and not held[key] then return false end
+  end
+  return true
+end
+
 -- 0x0E0, Linkshell Equip: offset 4 the linkshell number (1 or 2), 5 the
 -- inventory slot, 6 the bag. -> number, slot, bag | nil
 function M.parse_equip(data)
