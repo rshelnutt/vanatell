@@ -1,3 +1,2 @@
-0.5.0
-- Multiboxing: pair every character with the same code; switch characters from the top of Home.
-- Settings → Characters: add, pair again or remove a character.
+0.5.1
+- Linkshell lines said just after a zone go under their linkshell on your device, whatever bag your pearls are in.
