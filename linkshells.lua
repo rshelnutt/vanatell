@@ -152,6 +152,19 @@ function M.bag_loaded(bags, bag)
   return false
 end
 
+-- True when get_items() has no such bag, or shows it turned off: it holds
+-- no shell, loaded or not.
+function M.bag_absent(bags, bag)
+  if type(bags) ~= 'table' then return false end
+  local items = bags[bag]
+  if items == nil then
+    for _, b in ipairs(M.BAGS) do
+      if b[1] == bag then items = bags[b[2]] end
+    end
+  end
+  return items == nil or (type(items) == 'table' and items.enabled == false)
+end
+
 -- The inventory (bag 0) loaded: until it has, nothing read is trusted.
 function M.inventory_loaded(bags)
   return M.bag_loaded(bags, 0)
@@ -270,6 +283,17 @@ end
 -- /lsmes and /ls2mes), with status 0 (a message is set) or 5 (none is)
 -- names a slot. -> number (1 or 2), name | nil
 local MESSAGE_MODE, NAME_AT = 2, 0xA0
+
+-- True when a 0x0CC is the game's error answer to a linkshell message
+-- command: mode 1, or mode 2 with any other status or index.
+function M.message_error(data)
+  if type(data) ~= 'string' or #data < 0x9C + 2 then return false end
+  local mode = data:byte(0x9C + 1) + data:byte(0x9C + 2) * 256
+  if mode == 1 then return true end
+  if mode ~= MESSAGE_MODE then return false end
+  return M.parse_message(data) == nil
+end
+
 function M.parse_message(data)
   if type(data) ~= 'string' or #data < NAME_AT + NAME_BYTES then return nil end
   local mode = data:byte(0x9C + 1) + data:byte(0x9C + 2) * 256
