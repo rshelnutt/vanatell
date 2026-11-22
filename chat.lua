@@ -9,9 +9,10 @@ in this folder for what you may and may not do with it.
 -- for the relay, and validates phone text before it becomes a game command.
 -- Packet strings are 1-indexed, so Lua byte N is packet offset N - 1.
 -- Chat modes are the game's (Windower's res.chat ids): 3 tell, 4 party,
--- 5 linkshell, 27 linkshell 2. Say, shout, yell, emotes, alliance and the
--- rest are not carried. Game text is Shift-JIS (cp932) and relay text is
--- UTF-8; sjis.lua converts between them.
+-- 5 linkshell, 27 linkshell 2. Say, shout, emotes, alliance and the rest
+-- are not carried; a yell (26) is read by yells.lua, with sanitize_neutral.
+-- Game text is Shift-JIS (cp932) and relay text is UTF-8; sjis.lua converts
+-- between them.
 local chat = {}
 
 -- A sibling file, loaded with dofile like the others in vanatell.lua.
@@ -48,6 +49,7 @@ end
 -- retail client, 2026-11-15: "Hello!", no marks); Ashita's can give it inside
 -- the game's marks or braces. Either way the phrase alone comes back, and
 -- decode() puts it in { and }, so the app shows every phrase the same way.
+-- yells.lua names a yell's item and key item blocks with it.
 local decode
 local function phrase(block)
   local w = rawget(_G, 'windower')
@@ -62,14 +64,22 @@ local function phrase(block)
 end
 
 -- cp932 game text to UTF-8. Inside a phrase (inner), the game's open and
--- close marks are dropped and a further block is not expanded.
-function decode(raw, inner)
+-- close marks are dropped and a further block is not expanded. With blocks
+-- (a list), each auto-translate block of six bytes (0xFD, four bytes, 0xFD)
+-- is written as its four bytes in lowercase hex, {#tthhhhhh}, and added to
+-- blocks as {hex =, raw =}, instead of the client's rendering of it.
+function decode(raw, inner, blocks)
   local out, i, n = {}, 1, #raw
   while i <= n do
     local b = raw:byte(i)
     local step = 1
     if b == 0x00 then
       break
+    elseif b == 0xFD and blocks and raw:byte(i + 5) == 0xFD then
+      local block = raw:sub(i, i + 5)
+      local hex = string.format('%02x%02x%02x%02x', block:byte(2, 5))
+      blocks[#blocks + 1] = {hex = hex, raw = block}
+      out[#out + 1] = '{#' .. hex .. '}'; step = 6
     elseif b == 0xFD then
       -- Auto-translate phrase: 0xFD, a few id bytes (NULs included), 0xFD.
       local close
@@ -114,6 +124,20 @@ function chat.sanitize(raw)
   if text == '' then return nil end
   return text
 end
+
+-- The same, with each auto-translate block as its bytes, {#tthhhhhh}, the
+-- same on every client (yells spec C4) -> text, blocks ({hex =, raw =} in
+-- order), or nil if nothing printable is left.
+function chat.sanitize_neutral(raw)
+  local blocks = {}
+  local text = trim(decode(raw, false, blocks))
+  if text == '' then return nil end
+  return text, blocks
+end
+
+-- One auto-translate block (its bytes, 0xFD to 0xFD) as the client shows it,
+-- or nil when it cannot be read.
+chat.phrase = phrase
 
 -- Raw 0x017 packet -> {channel, sender, text}, or nil if it is not a tell,
 -- party or linkshell line the relay carries.
