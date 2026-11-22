@@ -36,14 +36,15 @@ The zips, as the tool builds them:
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-11-21
+
 ### Fixed
 
-- Linkshell lines said shortly after you zone keep their linkshell's name when you wear your pearls from the Mog
-  Satchel, Sack or Case. Those bags load after the inventory; the addon read them before they had loaded, took both
-  slots as empty, and the lines stayed under Unknown linkshell on your device. The addon now names each slot from the
-  linkshell message the game sends when the shell is equipped, and that name holds through later zones.
-- Linkshell lines said just after you log back in, or before your inventory has loaded, move to their linkshell once
-  the game says which slot each shell is in, instead of staying under Unknown linkshell.
+- Linkshell lines said just after a zone are filed under their linkshell, whatever bag your pearls are in (the
+  inventory, Mog Satchel, Sack or Case), instead of under Unknown linkshell on your device. The addon keeps which
+  linkshell is in each slot from what the game tells it, and a zone no longer changes it. After the addon loads (at
+  login, `//vt reload` or an update) it asks the game once for each slot's linkshell, out of your chat log. Lines
+  said before a slot is named move to their linkshell once it is.
 
 ## [0.5.0] - 2026-11-20
 
@@ -282,7 +283,8 @@ The zips, as the tool builds them:
 - Case-insensitive pair codes: upper or lower case both work, and dashes or
   spaces copied from the phone are ignored.
 
-[Unreleased]: https://github.com/rshelnutt/vanatell/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/rshelnutt/vanatell/compare/v0.5.1...HEAD
+[0.5.1]: https://github.com/rshelnutt/vanatell/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/rshelnutt/vanatell/compare/v0.4.1...v0.5.0
 [0.4.1]: https://github.com/rshelnutt/vanatell/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/rshelnutt/vanatell/compare/v0.3.9...v0.4.0
