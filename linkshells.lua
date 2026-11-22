@@ -130,20 +130,31 @@ function M.detect(player, bags, decode, equips)
   return M.assign(M.equipped(player, bags, decode, equips), player, equips)
 end
 
--- True when get_items() shows the inventory loaded: the bag is there, not
--- disabled, and holds an item (by its count or by an item in a slot). While
--- the game is still loading it, after login or zoning, the bag reads empty,
--- and empty slots read from it would be wrong.
-function M.inventory_loaded(bags)
+-- True when get_items() shows bag (a number in M.BAGS) loaded: the bag is
+-- there, not disabled, and holds an item (by its count or by an item in a
+-- slot). While the game is still loading a bag, after login or zoning, it
+-- reads empty, and empty slots read from it would be wrong; the Mog Satchel,
+-- Sack and Case load after the inventory.
+function M.bag_loaded(bags, bag)
   if type(bags) ~= 'table' then return false end
-  local inventory = bags[0] or bags.inventory
-  if type(inventory) ~= 'table' or inventory.enabled == false then return false end
-  if type(inventory.count) == 'number' and inventory.count > 0 then return true end
+  local items = bags[bag]
+  if items == nil then
+    for _, b in ipairs(M.BAGS) do
+      if b[1] == bag then items = bags[b[2]] end
+    end
+  end
+  if type(items) ~= 'table' or items.enabled == false then return false end
+  if type(items.count) == 'number' and items.count > 0 then return true end
   for slot = 1, BAG_SLOTS do
-    local item = inventory[slot]
+    local item = items[slot]
     if type(item) == 'table' and type(item.id) == 'number' and item.id ~= 0 then return true end
   end
   return false
+end
+
+-- The inventory (bag 0) loaded: until it has, nothing read is trusted.
+function M.inventory_loaded(bags)
+  return M.bag_loaded(bags, 0)
 end
 
 -- 0x0E0, Linkshell Equip: offset 4 the linkshell number (1 or 2), 5 the
