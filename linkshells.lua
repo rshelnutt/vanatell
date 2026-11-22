@@ -7,8 +7,9 @@ in this folder for what you may and may not do with it.
 -- Linkshells for vanatell: which linkshell is equipped in slot 1 and slot 2,
 -- worked out from game data passed in (so it runs outside the game too), the
 -- linkshell equip packet (0x0E0) that says which item went where, and the
--- linkshell message packet (0x0CC), the reply to /lsmes and /ls2mes, which
--- names the linkshell in the slot that was asked.
+-- linkshell message packet (0x0CC), which names the linkshell in a slot and
+-- says which slot: the game sends one for each equipped shell as you zone in,
+-- and one as the reply to /lsmes and /ls2mes.
 -- Packet strings are 1-indexed, so Lua byte N is packet offset N - 1.
 local M = {}
 
@@ -145,20 +146,6 @@ function M.inventory_loaded(bags)
   return false
 end
 
--- True when every bag slot the game named for a shell (equips: 'bag:slot' ->
--- 1 or 2) holds an equipped shell in found = M.equipped(...). After a
--- zone-in the Mog Satchel, Sack and Case load after the inventory: until
--- they have, a shell worn from one of them is not there to read.
-function M.equips_loaded(found, equips)
-  if type(equips) ~= 'table' then return true end
-  local held = {}
-  for _, f in ipairs(type(found) == 'table' and found or {}) do held[f.key] = true end
-  for key, n in pairs(equips) do
-    if SLOT[n] and not held[key] then return false end
-  end
-  return true
-end
-
 -- 0x0E0, Linkshell Equip: offset 4 the linkshell number (1 or 2), 5 the
 -- inventory slot, 6 the bag. -> number, slot, bag | nil
 function M.parse_equip(data)
@@ -227,7 +214,7 @@ function M.signature(found)
   return table.concat(parts, ',')
 end
 
--- 0x0CC, Linkshell Message, the reply to /lsmes and /ls2mes: its last field
+-- 0x0CC, Linkshell Message: its last field
 -- is the linkshell's name, 15 bytes packed as an item's linkshell name is: 6
 -- bits a character, most significant bit first, 0 the apostrophe, 1 to 26 a
 -- to z, 27 to 52 A to Z, and any other value ends the name. Windower's packet
@@ -262,6 +249,18 @@ function M.message_names(data)
     if name and not seen[name] then seen[name], names[#names + 1] = true, name end
   end
   return names
+end
+
+-- The slot a 0x0CC is for, and its linkshell's name: bit 14 of the int at
+-- offset 4 is the slot's index (0 slot 1, 1 slot 2), as Windower's packet
+-- library and its linkshell library read it, and the name is the last field
+-- (16 bytes before the end, 0x9C as those libraries lay the packet out).
+-- -> number (1 or 2), name | nil
+function M.parse_message(data)
+  if type(data) ~= 'string' or #data < 0x9C + NAME_BYTES then return nil end
+  local name = M.message_names(data)[1]
+  if not name then return nil end
+  return math.floor(data:byte(6) / 64) % 2 + 1, name
 end
 
 -- The equips map kept per character in the settings, so a reload starts with
