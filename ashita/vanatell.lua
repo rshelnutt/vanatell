@@ -18,7 +18,8 @@ in this folder for what you may and may not do with it.
 --              sends, as if the player typed it, and runs /addon reload
 --              vanatell after //vt update or //vt rollback
 --   game data  the player from party and player memory, the bags from
---              inventory memory, linkshell names and colours from item data
+--              inventory memory, linkshell names and colours from item data,
+--              and the character's world from Ashita's own account library
 --   settings   one file per character: config/addons/vanatell/<Name>/settings.json
 --              under the Ashita folder, saved through a temporary file and a
 --              rename; that character's key file (e2e.json), entropy seed and
@@ -204,6 +205,35 @@ local function get_player()
     rawset(t, 'linkshell_slot', slot or 0)
     return rawget(t, key)
   end})
+end
+
+---------------------------------------------------------------------------
+-- Which world: windower.ffxi.get_info().server, Windower's id for it.
+---------------------------------------------------------------------------
+-- Ashita's SDK names no world, so it is read with Ashita's own ffxi.account
+-- library (addons/libs/ffxi/account.lua, in Ashita's folder, loaded when it
+-- is first asked for and never part of this addon): the selected
+-- character's world in the client's character list, when that character is
+-- the one logged in. With no such library (an older Ashita v4), an error from
+-- it, or a list that names another character, the world is not known. Every
+-- call to it is inside pcall, and nothing is logged.
+local WORLD_IDS = dofile(ADDON_PATH .. 'yells.lua').WORLD_IDS
+local account -- the library once loaded; false when it could not be
+
+local function get_info()
+  local player = get_player()
+  if not player then return {} end
+  if account == nil then
+    local ok, lib = pcall(require, 'ffxi.account')
+    account = ok and type(lib) == 'table' and lib or false
+  end
+  if not account then return {} end
+  local ok, name, world = pcall(function()
+    local index = account.get_selected_character_index()
+    return account.get_login_character_name(index), account.get_login_world_name(index)
+  end)
+  if not ok or type(name) ~= 'string' or type(world) ~= 'string' or name:lower() ~= player.name:lower() then return {} end
+  return {server = WORLD_IDS[world]}
 end
 
 ---------------------------------------------------------------------------
@@ -476,7 +506,7 @@ windower = {
   console = console,
   send_command = send_command,
   convert_auto_trans = convert_auto_trans,
-  ffxi = {get_player = get_player, get_items = get_items},
+  ffxi = {get_player = get_player, get_items = get_items, get_info = get_info},
   platform = 'ashita',
   dir_exists = function(path) return ashita.fs.exists(path) end,
   create_dir = function(path) return (ashita.fs.create_directory or ashita.fs.create_dir)(path) end,
