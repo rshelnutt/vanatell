@@ -926,7 +926,10 @@ local function linkshell_name(channel, ts)
   local ls = app.ls
   local name = said_names()[channel]
   if name then return name end
-  if name == nil and not ls.unnamed_from then ls.unnamed_from = ts end
+  -- A line on ls1 or ls2 means the game has a shell in that slot, so a line
+  -- sent with no name is always remembered for the rename, even when a read
+  -- said no shell (a slot whose saved bag slot is stale).
+  if not ls.unnamed_from then ls.unnamed_from = ts end
   return NULL
 end
 
