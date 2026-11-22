@@ -41,7 +41,7 @@ The zips, as the tool builds them:
 - Linkshell lines said shortly after you zone keep their linkshell's name when you wear your pearls from the Mog
   Satchel, Sack or Case. Those bags load after the inventory; the addon read them before they had loaded, took both
   slots as empty, and the lines stayed under Unknown linkshell on your device. The addon now names each slot from the
-  linkshell message the game sends for it as you zone in.
+  linkshell message the game sends when the shell is equipped, and that name holds through later zones.
 - Linkshell lines said just after you log back in, or before your inventory has loaded, move to their linkshell once
   the game says which slot each shell is in, instead of staying under Unknown linkshell.
 

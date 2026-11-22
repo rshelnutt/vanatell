@@ -58,12 +58,13 @@ local LS_RECHECK = 2
 local LS_SETTLE = 10
 -- The game says which slot a shell is in with a 0x0E0 packet (on equipping,
 -- and for both slots on zone-in, by bag slot) and with the linkshell message
--- (0x0CC), which names the linkshell in a slot and says which slot: the game
--- sends one for each equipped shell as you zone in, whatever bag the shell
--- is worn from, and one as the reply to /lsmes (slot 1) and /ls2mes (slot
--- 2). A linkshell line is only ever named by what the game said: until it
--- has, the addon asks with those commands, and keeps their replies out of
--- the chat log.
+-- (0x0CC), which names the linkshell in a slot and says which slot, whatever
+-- bag the shell is worn from: the game sends one when a shell is equipped
+-- (the client asks for it) and as the reply to /lsmes (slot 1) and /ls2mes
+-- (slot 2). The name it gives a slot stands until a 0x0E0 empties that slot
+-- or puts another item in it, or a logout. A linkshell line is only ever
+-- named by what the game said: until it has, the addon asks with those
+-- commands, and keeps their replies out of the chat log.
 local LS_LOOKUP_HOLD = 1.5  -- seconds linkshell lines wait for the first reply
 local LS_LOOKUP_WAIT = 5    -- seconds a command's reply is waited for before the next command
 local LS_HELD_MAX = 200     -- linkshell lines held while they wait
@@ -230,7 +231,7 @@ local app = {
   ls = {               -- linkshell detection
     equips = {},       -- 'bag:slot' -> 1 or 2, from 0x0E0 packets, /lsmes replies and the saved settings
     said = {},         -- slot number -> true: the game said since load or login what is in it
-    named = {},        -- slot number -> the linkshell name a 0x0CC gave that slot since the zone-in
+    named = {},        -- slot number -> the linkshell name a 0x0CC gave that slot since it was equipped or since login
     colors = {},       -- linkshell name -> its colour, from the item reads
     known = false,     -- the game said which slot current's shells are in
     found = nil,       -- the equipped shells current was read from (linkshells.equipped)
@@ -869,8 +870,8 @@ local function encryption_text()
 end
 
 -- What the game has said is in each slot: {ls1 =, ls2 =}, each a linkshell
--- name, false (no shell) or nil (not said). A slot a 0x0CC named since the
--- zone-in has that name; any other has the settled read's shell once the
+-- name, false (no shell) or nil (not said). A slot a 0x0CC named has that
+-- name; any other has the settled read's shell once the
 -- game has said where its shells are, unless the game named that shell in
 -- the other slot.
 local LS_SLOTS = {'ls1', 'ls2'}
@@ -1421,8 +1422,9 @@ end
 -- time, and the next only after LS_LOOKUP_WAIT, so a reply always answers
 -- the one command asked; the reply packet is blocked, so nothing shows in
 -- the chat log. With two shells equipped, one answer places both. A slot
--- with no shell, or a linkshell with no message set, gives no reply (the
--- game may print its own line for that). Linkshell lines wait up to
+-- with no shell gives no reply that names one (the game may print its own
+-- line for that); a linkshell with no message set replies with its name and
+-- no message. Linkshell lines wait up to
 -- LS_LOOKUP_HOLD for the first answer, then go with no name until one comes.
 ---------------------------------------------------------------------------
 local finish_lookup
@@ -1488,10 +1490,10 @@ finish_lookup = function(t, how)
 end
 
 -- A linkshell message (0x0CC) the addon did not ask for (the game sends one
--- for each equipped shell as you zone in) names the shell in its slot: lines
--- on that slot are named by it at once, whatever bag the shell is worn from
--- and whether that bag has loaded. When the shell can be read, its bag slot
--- is placed too, and read again.
+-- when a shell is equipped) names the shell in its slot: lines on that slot
+-- are named by it from then on, through zone-ins, whatever bag the shell is
+-- worn from and whether that bag has loaded. When the shell can be read, its
+-- bag slot is placed too, and read again.
 local function note_named(number, name, t)
   local ls = app.ls
   ls.named[number] = name
@@ -1514,6 +1516,7 @@ local function on_linkshell_message(data)
   if look and linkshells.confirm(ls.equips, look.found, linkshells.message_names(data), look.slot) then
     ls.said[look.slot] = true
     if #look.found == 2 then ls.said[3 - look.slot] = true end
+    -- A reply that names the slot names it for good, as one the addon did not ask for does.
     if name then ls.named[look.slot] = name end
     finish_lookup(t, 'answered')
     return true
@@ -2093,8 +2096,6 @@ windower.register_event('incoming chunk', function(id, data)
     end
   elseif id == 0x00A then
     finish_lookup(now(), 'cancelled')
-    -- The 0x0CCs that follow the zone-in name the slots again.
-    app.ls.named = {}
     watch_linkshells()
     check_linkshells_in('zone', LS_ZONE_SETTLE)
   elseif id == 0x01D then

@@ -8,8 +8,8 @@ in this folder for what you may and may not do with it.
 -- worked out from game data passed in (so it runs outside the game too), the
 -- linkshell equip packet (0x0E0) that says which item went where, and the
 -- linkshell message packet (0x0CC), which names the linkshell in a slot and
--- says which slot: the game sends one for each equipped shell as you zone in,
--- and one as the reply to /lsmes and /ls2mes.
+-- says which slot: the game sends one when a shell is equipped (the client
+-- asks for it) and as the reply to /lsmes and /ls2mes.
 -- Packet strings are 1-indexed, so Lua byte N is packet offset N - 1.
 local M = {}
 
@@ -251,16 +251,23 @@ function M.message_names(data)
   return names
 end
 
--- The slot a 0x0CC is for, and its linkshell's name: bit 14 of the int at
--- offset 4 is the slot's index (0 slot 1, 1 slot 2), as Windower's packet
--- library and its linkshell library read it, and the name is the last field
--- (16 bytes before the end, 0x9C as those libraries lay the packet out).
--- -> number (1 or 2), name | nil
+-- The slot a 0x0CC names, and its linkshell's name, as the retail client
+-- reads the 0xB0-byte packet: 0x04 the status (its low 4 bits), 0x05 bits
+-- 6-7 the slot's index (0 slot 1, 1 slot 2; other values are for errors),
+-- 0x9C the mode, 0xA0 the name (16 bytes, the end of the packet). Only mode
+-- 2, a slot's linkshell message (sent when a shell is equipped and for
+-- /lsmes and /ls2mes), with status 0 (a message is set) or 5 (none is)
+-- names a slot. -> number (1 or 2), name | nil
+local MESSAGE_MODE, NAME_AT = 2, 0xA0
 function M.parse_message(data)
-  if type(data) ~= 'string' or #data < 0x9C + NAME_BYTES then return nil end
-  local name = M.message_names(data)[1]
+  if type(data) ~= 'string' or #data < NAME_AT + NAME_BYTES then return nil end
+  local mode = data:byte(0x9C + 1) + data:byte(0x9C + 2) * 256
+  local status = data:byte(5) % 16
+  local index = math.floor(data:byte(6) / 64)
+  if mode ~= MESSAGE_MODE or (status ~= 0 and status ~= 5) or index > 1 then return nil end
+  local name = name_at(data, NAME_AT) or name_at(data, #data - 16)
   if not name then return nil end
-  return math.floor(data:byte(6) / 64) % 2 + 1, name
+  return index + 1, name
 end
 
 -- The equips map kept per character in the settings, so a reload starts with
