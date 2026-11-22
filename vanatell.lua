@@ -10,8 +10,9 @@ in this folder for what you may and may not do with it.
 -- and reconnect with backoff), chat capture with its offline queue, the
 -- phone's send frames, the linkshells frame (which shell is equipped in
 -- slots 1 and 2, asked of the game with /lsmes and /ls2mes when it has not
--- said), and the update check and //vt update (update.lua). All network work
--- is pumped from prerender and never blocks.
+-- said), the yells it shares while the account has Yells on (yells.lua),
+-- and the update check and //vt update (update.lua). All network work is
+-- pumped from prerender and never blocks.
 _addon.name = 'vanatell'
 _addon.command = 'vt'
 _addon.version = '0.5.1'
@@ -25,6 +26,8 @@ local function load_local(name) return hooks[name] or dofile(windower.addon_path
 local json, chat, ws = load_local('json'), load_local('chat'), load_local('ws')
 local linkshells, update = load_local('linkshells'), load_local('update')
 local e2e, random, sha256 = load_local('e2e'), load_local('random'), load_local('sha256')
+local yells = load_local('yells')
+yells.chat = chat
 local now = hooks.now or require('socket').gettime
 
 local BACKOFF_MIN = 1      -- seconds before the first retry
@@ -228,6 +231,8 @@ local app = {
   no_bit_said = false, -- the refusal's no bit library line was logged since load
   no_newer_said = false, -- the refusal's no newer version line was logged since load
   opened_at = nil, last_rx = nil, last_ping = nil,
+  world = nil,         -- the character's world, as the last socket URL named it
+  yells_on = false,    -- this socket shares yells: the relay's hello or yells frame said so; false from every close
   ls = {               -- linkshell detection
     equips = {},       -- 'bag:slot' -> 1 or 2, from 0x0E0 packets, /lsmes replies and the saved settings
     said = {},         -- slot number -> true: the game said since load or login what is in it
@@ -852,13 +857,19 @@ local function resend_kx()
 end
 
 -- The socket URL: the character, whether this addon can encrypt, its key
--- id, and the key id of the recovery key it holds when it has no keys.
+-- id, and the key id of the recovery key it holds when it has no keys; then
+-- that it can share yells, and the character's world when the game says a
+-- retail one (asked again for each socket).
 local function socket_url()
   local url = RELAY_URL .. '/v1/ws?role=addon&character=' .. CHAR
-  if not pool then return url end
-  local s = app.e2e
-  local recover = (not s.keys and recovery()) or ''
-  return url .. '&e2e=1&key=' .. (s.keys and s.keys.keyId or '') .. '&recover=' .. recover
+  if pool then
+    local s = app.e2e
+    local recover = (not s.keys and recovery()) or ''
+    url = url .. '&e2e=1&key=' .. (s.keys and s.keys.keyId or '') .. '&recover=' .. recover
+  end
+  local info = windower.ffxi.get_info and windower.ffxi.get_info()
+  app.world = yells.world_name(type(info) == 'table' and info.server or nil)
+  return url .. '&yells=1' .. (app.world and ('&world=' .. app.world) or '')
 end
 
 local function encryption_text()
@@ -1730,7 +1741,7 @@ end
 local function drop_client(code, reason)
   local client = app.client
   if not client then return end
-  app.client = nil
+  app.client, app.yells_on = nil, false
   client:close(code, reason)
   client:abort()
 end
@@ -1745,10 +1756,11 @@ local function on_open(client)
 end
 
 -- The relay said hello: the connection is open. The held chat goes out
--- first, in order, then the linkshells. A second hello on the same socket
--- changes nothing.
-local function on_hello(client)
+-- first, in order, then the linkshells. It says "yells":1 when this socket
+-- is to share yells. A second hello on the same socket changes nothing.
+local function on_hello(client, frame)
   if app.state == 'open' then return end
+  app.yells_on = frame.yells == 1
   local queue = app.queue
   app.queue, app.queue_full = {}, false
   for _, frame in ipairs(queue) do client:send_text(frame) end
@@ -1783,11 +1795,14 @@ local function on_message(client, text)
       save()
       mark_e2e()
     end
-    on_hello(client)
+    on_hello(client, frame)
   elseif frame.type == 'send' then
     handle_send(client, frame)
   elseif frame.type == 'kx' then
     on_kx(frame)
+  elseif frame.type == 'yells' and (frame.on == 0 or frame.on == 1) then
+    -- Yells turned on or off for the account: sharing starts or stops at once.
+    app.yells_on = frame.on == 1
   end
 end
 
@@ -1841,7 +1856,7 @@ end
 -- backoff.
 local function on_close(client, code, reason)
   if client ~= app.client then return end
-  app.client = nil
+  app.client, app.yells_on = nil, false
   local status = client.http_status
   if status == 401 or status == 403 or code == 4000 or code == 4001 then
     app.state = 'unauthorized'
@@ -2035,6 +2050,7 @@ function commands.status()
   log('queued: ' .. #app.queue)
   log('linkshells: ' .. linkshells_text())
   log('encryption: ' .. encryption_text())
+  log('yells: ' .. ((app.yells_on and app.world) and ('sharing on ' .. app.world) or 'off'))
 end
 
 function commands.on()
@@ -2137,7 +2153,7 @@ windower.register_event('prerender', function()
   if app.client and app.last_rx then
     if t - app.last_rx >= IDLE_TIMEOUT then
       local client = app.client
-      app.client = nil
+      app.client, app.yells_on = nil, false
       client:abort()
       schedule_retry('idle timeout')
     elseif app.state == 'open' and t - app.last_ping >= PING_INTERVAL then
@@ -2175,12 +2191,29 @@ local function repeated(id, data)
   return false
 end
 
+-- A yell goes to the relay at once while this socket shares yells (the
+-- relay said so and the URL named the world, as //vt status says), and is
+-- otherwise dropped: never held, never written, never sealed (the server
+-- reads yells, so they are not encrypted). The player's own yells too.
+local function share_yell(data)
+  if not (app.yells_on and app.world and app.state == 'open' and app.client) then return end
+  local y = yells.parse(data)
+  if not y then return end
+  local hexes, names = {}, {}
+  for hex in pairs(y.names) do hexes[#hexes + 1] = hex end
+  table.sort(hexes)
+  for i, hex in ipairs(hexes) do names[i] = json.encode(hex) .. ':' .. json.encode(y.names[hex]) end
+  local head = encode_fields{{'type', 'yell'}, {'sender', y.sender}, {'zone', y.zone}, {'text', y.text}}
+  app.client:send_text(head:sub(1, -2) .. ',"names":{' .. table.concat(names, ',') .. '}}')
+end
+
 windower.register_event('incoming chunk', function(id, data)
   if id == 0x0CC then
     if on_linkshell_message(data) then return true end
     return
   end
   if id ~= 0x017 or repeated(id, data) then return end
+  if data:byte(5) == yells.KIND then return share_yell(data) end
   local record = chat.parse_incoming(data)
   if not record then return end
   local me = player_name()
