@@ -36,6 +36,18 @@ The zips, as the tool builds them:
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-11-22
+
+### Added
+
+- Yells: with Yells turned on in the app (Settings → Yells), every character on the account shares the yells it hears
+  in game: who yelled, their zone and what they said. With Yells off, no yell leaves the game.
+- A yell is shared only while the addon is connected. One heard while it is not connected is never sent later.
+- `//vt status` (on Ashita, `/vt status`) says whether the character shares yells, for example
+  `yells: sharing on Asura`, or `yells: off`.
+- On Ashita, the character's server is read from Ashita's own account library. On an Ashita v4 without it, yells are
+  not shared and `/vt status` says `yells: off`.
+
 ## [0.5.1] - 2026-11-21
 
 ### Fixed
@@ -283,7 +295,8 @@ The zips, as the tool builds them:
 - Case-insensitive pair codes: upper or lower case both work, and dashes or
   spaces copied from the phone are ignored.
 
-[Unreleased]: https://github.com/rshelnutt/vanatell/compare/v0.5.1...HEAD
+[Unreleased]: https://github.com/rshelnutt/vanatell/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/rshelnutt/vanatell/compare/v0.5.1...v0.6.0
 [0.5.1]: https://github.com/rshelnutt/vanatell/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/rshelnutt/vanatell/compare/v0.4.1...v0.5.0
 [0.4.1]: https://github.com/rshelnutt/vanatell/compare/v0.4.0...v0.4.1

@@ -1,2 +1,3 @@
-0.5.1
-- Linkshell lines said just after a zone go under their linkshell on your device, whatever bag your pearls are in.
+0.6.0
+- Yells: turn them on in Settings to read your server's yells and set keyword alerts.
+- Keyword alerts pop up on your device, one at a time: Settings → Yells → Keyword alerts.
