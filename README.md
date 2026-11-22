@@ -33,15 +33,16 @@ Partner addon for the VanaTell app (iOS/Android). You need both: this addon in W
 - **Tells, party, LS1 and LS2 on your device.** Every tell you receive or send, and every party, LS1 and LS2 line, shows up in the app. Lines you type at the keyboard show up there too.
 - **Answer from the device.** Send a tell, a party line, an LS1 line or an LS2 line from the app, and the addon types it in game for you.
 - **Linkshells detected for you.** The addon reads the name of the linkshell equipped in each slot, and whether a slot has one equipped at all, so the app files every line under the right shell. Which slot a shell is in comes only from the game: its equip message when you zone or equip a shell, or, when the addon loads mid-session, the game's reply to `/lsmes` and `/ls2mes`, which the addon types for you and keeps out of your chat log. It never guesses.
+- **Yells.** Turn on Yells in the app to read the last 2 hours of yells on your server and get an alert when one has your keyword.
 
 Japanese chat is carried both ways: Japanese lines show on your device as written, and Japanese you type on the device reaches the game.
 
-Say, shout, yell, emotes and system messages stay in game.
+Say, shout, yell, emotes and system messages stay in game; yells leave it only when you turn on Yells in the app.
 
 ## Security
 
 - **No account to steal.** No email, password or name. Your device and PC pair with a random token for the device and one for each character, and the server keeps only a one-way hash of each, never the tokens.
-- **Only chat leaves the game.** Tells, party and both linkshells. Never say, shout or yell, your inventory, gil or position, and nothing from your Square Enix account.
+- **Only chat leaves the game.** Tells, party and both linkshells. Never say, shout or yell, your inventory, gil or position, and nothing from your Square Enix account; yells leave it only when you turn on Yells in the app.
 - **Never writes packets.** The addon never writes or injects game packets. It reads chat, and from your device it can only type `/tell`, `/p`, `/l` and `/l2`, the way you would at the keyboard.
 - **Encrypted in transit and at rest.** Every connection uses TLS, and the addon checks the server's certificate itself against `relay-roots.txt`. Stored lines are encrypted on Cloudflare's network.
 - **Little kept, deleted on request.** The server keeps the newest 2,000 lines per character so your device can catch up. **Unpair this device** in the app deletes your account and everything stored, at once, though for 30 days a copy still exists in Cloudflare's point-in-time recovery of the relay's storage, which the relay cannot erase.
@@ -56,6 +57,7 @@ Say, shout, yell, emotes and system messages stay in game.
 - **See what the relay holds.** In the app, **Settings → Encryption → See what the server holds** shows your newest stored lines exactly as the relay returns them.
 - **After you have compared the codes, the relay can't type for you.** The addon then types only what your device encrypted, and each of those only once.
 - **Updates.** Once encryption is on for your account, the relay turns away a version of the addon without encryption. A version that can update itself then does so from vanatell.com, checking every file's size and SHA-256 as `//vt update` does; an older one tells you to type `//vt update`. Otherwise the addon updates only when you type `//vt update`.
+- **Yells.** With Yells on in the app, every character on your account shares the yells it hears in game: who yelled, their zone and what they said. Other players can't see who shared a yell. Yells aren't encrypted. The server keeps them readable for 2 hours, with the account that shared each one, then deletes them; its 30-day recovery copy can still hold them. The server keeps your keyword alerts so it can match yells and alert you. Turn Yells off any time in the app's Settings. That stops sharing and deletes your keyword alerts from the server.
 - **What the relay still sees.** Who each line is from and to, the channel, whether it came in or went out, the linkshell's name and the times. It needs them to file lines under the right linkshell, apply your mutes and send your replies to the right place.
 
 The full detail: [What is sent and what is not](#what-is-sent-and-what-is-not), and [vanatell.com/privacy](https://vanatell.com/privacy).
@@ -118,7 +120,7 @@ To pair a character again later, open **Settings → Characters** in the app and
 | Windower | Ashita | What it does |
 | --- | --- | --- |
 | `//vt pair CODE` | `/vt pair CODE` | Pair with the code shown in the app |
-| `//vt status` | `/vt status` | Show the version, character, pairing, connection, queued messages and linkshells |
+| `//vt status` | `/vt status` | Show the version, character, pairing, connection, queued messages, linkshells and yells |
 | `//vt on` / `//vt off` | `/vt on` / `/vt off` | Start or stop relaying |
 | `//vt unpair` | `/vt unpair` | Forget this character's pairing |
 | `//vt update` | `/vt update` | Install the newest version, if there is one, and reload |
@@ -136,6 +138,7 @@ VanaTell: connection: connected
 VanaTell: queued: 0
 VanaTell: linkshells: 1=KupoKnights 2=(none)
 VanaTell: encryption: on, safety code 1234 5678 9012
+VanaTell: yells: sharing on Asura
 ```
 
 ## Updating
@@ -156,6 +159,7 @@ To update by hand instead, download the zip from [Releases](../../releases) as i
 
 - Each tell, party, LS1 and LS2 line: the channel, whether it came in or went out, who sent it, the tell target, the text, the time, and for linkshell lines the name of that linkshell. Once encryption is on, the text is encrypted on your PC and the relay cannot read it; the rest stays readable so the relay can file and route the line.
 - The names and colours of the linkshells equipped in slots 1 and 2, when they change.
+- With Yells on in the app, each yell your characters hear: who yelled, their zone and what they said.
 - A keepalive every 30 seconds.
 
 **Asked of vanatell.com**
@@ -164,7 +168,7 @@ To update by hand instead, download the zip from [Releases](../../releases) as i
 
 **Never sent**
 
-- Say, shout, yell, emotes or system messages.
+- Say, shout, yell, emotes or system messages; yells leave the game only when you turn on Yells in the app.
 - Your inventory, gil, position, job or anything else from the game.
 
 **What the device can do in game**
