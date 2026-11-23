@@ -17,7 +17,7 @@ in this folder for what you may and may not do with it.
 -- prerender and never blocks.
 _addon.name = 'vanatell'
 _addon.command = 'vt'
-_addon.version = '0.6.1'
+_addon.version = '0.6.2'
 
 local config = require('config')
 
@@ -1735,6 +1735,12 @@ end
 local function note_named(number, name, t)
   local ls = app.ls
   ls.named[number], ls.messaged[number] = name, true
+  -- One shell is never in both slots: the game names this shell in this slot, so a name the other slot holds for it
+  -- (an earlier misplacement) is dropped, and that slot is worked out again.
+  if name and ls.named[3 - number] and ls.named[3 - number]:lower() == name:lower() then
+    ls.named[3 - number], ls.messaged[3 - number], ls.said[3 - number] = nil, nil, nil
+    for key, n in pairs(ls.equips) do if n == 3 - number then ls.equips[key] = nil end end
+  end
   local state, found = read_linkshells()
   if state and linkshells.confirm(ls.equips, found, name, number) then
     ls.said[number] = true
@@ -1760,7 +1766,10 @@ local function on_linkshell_message(data)
   end
   -- The reply to a slot asked alone after a load: it names a shell read in that slot, or its own slot index names
   -- the slot when no read shell is in it (its bag has not loaded).
-  if look and look.only then
+  -- A message for the other slot (its own slot index says so) is not the reply to the slot asked: it names its own
+  -- slot below, and never the slot asked.
+  local other = number ~= nil and look ~= nil and number ~= (look.only or look.slot)
+  if look and look.only and not other then
     local n = look.only
     local placed = linkshells.confirm(ls.equips, look.found, linkshells.message_names(data), n)
     local unread = #look.found < 2
@@ -1775,7 +1784,7 @@ local function on_linkshell_message(data)
       if not ask_after_load(ls.found or {}, t) then ls.after_load = false end
       return true
     end
-  elseif look and linkshells.confirm(ls.equips, look.found, linkshells.message_names(data), look.slot) then
+  elseif look and not other and linkshells.confirm(ls.equips, look.found, linkshells.message_names(data), look.slot) then
     ls.said[look.slot] = true
     if #look.found == 2 then ls.said[3 - look.slot] = true end
     -- A reply that names the slot names it for good, as one the addon did not ask for does.

@@ -36,6 +36,12 @@ The zips, as the tool builds them:
 
 ## [Unreleased]
 
+## [0.6.2] - 2026-11-23
+
+### Fixed
+
+- After a reload, a linkshell message for one slot no longer puts its linkshell in the other slot too; a linkshell shown in both slots is put right as soon as the game names it.
+
 ## [0.6.1] - 2026-11-22
 
 ### Added
@@ -306,7 +312,8 @@ The zips, as the tool builds them:
 - Case-insensitive pair codes: upper or lower case both work, and dashes or
   spaces copied from the phone are ignored.
 
-[Unreleased]: https://github.com/rshelnutt/vanatell/compare/v0.6.1...HEAD
+[Unreleased]: https://github.com/rshelnutt/vanatell/compare/v0.6.2...HEAD
+[0.6.2]: https://github.com/rshelnutt/vanatell/compare/v0.6.1...v0.6.2
 [0.6.1]: https://github.com/rshelnutt/vanatell/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/rshelnutt/vanatell/compare/v0.5.1...v0.6.0
 [0.5.1]: https://github.com/rshelnutt/vanatell/compare/v0.5.0...v0.5.1
