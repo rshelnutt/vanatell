@@ -1,3 +1,2 @@
-0.6.0
-- Yells: turn them on in Settings to read your server's yells and set keyword alerts.
-- Keyword alerts pop up on your device, one at a time: Settings → Yells → Keyword alerts.
+0.6.1
+- Yells tab: yells from players on your in-game blacklist are hidden, and you can blacklist a yell's sender from there.

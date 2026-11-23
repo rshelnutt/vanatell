@@ -36,6 +36,17 @@ The zips, as the tool builds them:
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-11-22
+
+### Added
+
+- Yells: the addon sends the character's in-game blacklist to the app, so yells from players on it don't show in the
+  Yells tab for that character, and they never raise a keyword alert. It sends the list again whenever it changes, and
+  keeps it in the character's settings, so it holds when the addon reloads at login.
+- Blacklisting from the app: blacklist a yell's sender in the Yells tab, and the addon of the character you chose types
+  `/blacklist add <name>` in game. With 300 names on the blacklist it types nothing, and the app is told the blacklist
+  is full. Removing a name stays in game.
+
 ## [0.6.0] - 2026-11-22
 
 ### Added
@@ -295,7 +306,8 @@ The zips, as the tool builds them:
 - Case-insensitive pair codes: upper or lower case both work, and dashes or
   spaces copied from the phone are ignored.
 
-[Unreleased]: https://github.com/rshelnutt/vanatell/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/rshelnutt/vanatell/compare/v0.6.1...HEAD
+[0.6.1]: https://github.com/rshelnutt/vanatell/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/rshelnutt/vanatell/compare/v0.5.1...v0.6.0
 [0.5.1]: https://github.com/rshelnutt/vanatell/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/rshelnutt/vanatell/compare/v0.4.1...v0.5.0
