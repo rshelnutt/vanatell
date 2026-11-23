@@ -1,2 +1,2 @@
-0.6.3
-- A player you blacklist in game hides from the Yells tab at once, before your next zone.
+0.6.4
+- Your in-game blacklist reaches the Yells tab as soon as the addon loads; no zone needed.

@@ -36,6 +36,12 @@ The zips, as the tool builds them:
 
 ## [Unreleased]
 
+## [0.6.4] - 2026-11-23
+
+### Fixed
+
+- The blacklist never waits for a zone-in: as it loads, the addon asks the game for the character's whole blacklist (as the game itself does when its list is not set up), and asks again until it comes, so blacklisted players' yells hide at once.
+
 ## [0.6.3] - 2026-11-23
 
 ### Fixed
@@ -318,7 +324,8 @@ The zips, as the tool builds them:
 - Case-insensitive pair codes: upper or lower case both work, and dashes or
   spaces copied from the phone are ignored.
 
-[Unreleased]: https://github.com/rshelnutt/vanatell/compare/v0.6.3...HEAD
+[Unreleased]: https://github.com/rshelnutt/vanatell/compare/v0.6.4...HEAD
+[0.6.4]: https://github.com/rshelnutt/vanatell/compare/v0.6.3...v0.6.4
 [0.6.3]: https://github.com/rshelnutt/vanatell/compare/v0.6.2...v0.6.3
 [0.6.2]: https://github.com/rshelnutt/vanatell/compare/v0.6.1...v0.6.2
 [0.6.1]: https://github.com/rshelnutt/vanatell/compare/v0.6.0...v0.6.1

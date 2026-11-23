@@ -34,7 +34,7 @@ in this folder for what you may and may not do with it.
 -- main.lua is the Windower addon's vanatell.lua.
 addon.name    = 'vanatell'
 addon.author  = 'Rob Shelnutt'
-addon.version = '0.6.3'
+addon.version = '0.6.4'
 addon.desc    = 'Relays tells, party and linkshell chat to the VanaTell app.'
 addon.link    = 'https://github.com/rshelnutt/vanatell'
 
@@ -505,6 +505,12 @@ windower = {
   add_to_chat = add_to_chat,
   console = console,
   send_command = send_command,
+  -- A packet to the server, header included, as Windower's inject_outgoing takes it.
+  packets = {
+    inject_outgoing = function(id, data)
+      AshitaCore:GetPacketManager():AddOutgoingPacket(id, {data:byte(1, -1)})
+    end,
+  },
   convert_auto_trans = convert_auto_trans,
   ffxi = {get_player = get_player, get_items = get_items, get_info = get_info},
   platform = 'ashita',

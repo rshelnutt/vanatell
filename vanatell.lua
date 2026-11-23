@@ -17,7 +17,7 @@ in this folder for what you may and may not do with it.
 -- prerender and never blocks.
 _addon.name = 'vanatell'
 _addon.command = 'vt'
-_addon.version = '0.6.3'
+_addon.version = '0.6.4'
 
 local config = require('config')
 
@@ -206,6 +206,8 @@ if claimed and settings.e2e_account ~= '' and settings.e2e_account == settings.a
 -- the socket URL. One table, as the main chunk holds at most 200 locals.
 local black = {
   WAIT = 10, -- seconds a /blacklist add the relay asked for waits for the game's add before it counts as not made
+  LIST_WAIT = 10, -- seconds an ask for the whole list waits for the game's answer before it asks again
+  LIST_TRIES = 3, -- asks for the whole list at most, per load
 }
 
 -- A character name as the game writes one: 3 to 15 letters.
@@ -957,7 +959,7 @@ function black.on_part(data)
   end
   if not part.last then return end
   local names = bl.building
-  bl.building = nil
+  bl.building, bl.whole = nil, true
   black.set(names)
   for _, name in ipairs(names) do black.answer(name:lower(), true) end
 end
@@ -1003,10 +1005,28 @@ function black.on_add(frame)
   windower.send_command('input /blacklist add ' .. name)
 end
 
+-- Asks the game for the character's whole blacklist, as the client itself
+-- does when its own list is not set up (0x03C, every field 0; XiPackets
+-- world/client/0x003C): the game answers with the list in parts (0x041). So
+-- the list is known as soon as the addon loads, never only after a zone-in.
+function black.request(t)
+  local packets = windower.packets
+  if not (packets and packets.inject_outgoing) then return end
+  local bl = app.blacklist
+  bl.requests, bl.requested_at = (bl.requests or 0) + 1, t
+  packets.inject_outgoing(0x03C, string.char(0x3C, 0x0E) .. ('\0'):rep(0x1C - 2))
+end
+
 -- A /blacklist add the game has not made in black.WAIT is answered not ok.
+-- An ask for the whole list that the game has not answered in LIST_WAIT is
+-- made again, LIST_TRIES times at most.
 function black.pump(t)
-  for key, ask in pairs(app.blacklist.waiting) do
+  local bl = app.blacklist
+  for key, ask in pairs(bl.waiting) do
     if t >= ask.deadline then black.answer(key, false) end
+  end
+  if not bl.whole and bl.requested_at and bl.requests < black.LIST_TRIES and t - bl.requested_at >= black.LIST_WAIT then
+    black.request(t)
   end
 end
 
@@ -2257,6 +2277,7 @@ windower.register_event('load', function()
   local s = app.e2e
   if pool and s.kx and s.kx.a and not s.keys then start_job('A', s.kx) end -- to answer the commit again
   start()
+  black.request(now())
 end)
 
 -- The reload of an update or a rollback, which Windower (or Ashita) ran
