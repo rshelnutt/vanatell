@@ -1,2 +1,2 @@
-0.6.2
-- After a reload, each linkshell stays in its own slot.
+0.6.3
+- A player you blacklist in game hides from the Yells tab at once, before your next zone.

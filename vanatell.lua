@@ -17,7 +17,7 @@ in this folder for what you may and may not do with it.
 -- prerender and never blocks.
 _addon.name = 'vanatell'
 _addon.command = 'vt'
-_addon.version = '0.6.2'
+_addon.version = '0.6.3'
 
 local config = require('config')
 
@@ -964,6 +964,9 @@ end
 
 -- 0x042, a name added to the game's list or removed from it: the list
 -- changes, when it is known, and the add answers the relay's ask for it.
+-- While the list is not known (no zone-in since the addon first ran), an
+-- add nobody asked for still goes to the relay as a confirmed add, so the
+-- name is on this character's blacklist there at once.
 function black.on_edit(data)
   local edit = yells.parse_blacklist_edit(data)
   if not edit then return end
@@ -977,7 +980,9 @@ function black.on_edit(data)
     if edit.add and not found and #names < yells.BLACKLIST_MAX then names[#names + 1] = edit.name end
     black.set(names)
   end
-  if edit.add then black.answer(key, true) end
+  if not edit.add then return end
+  if bl.waiting[key] then black.answer(key, true)
+  elseif not bl.names then black.send_result(edit.name, true) end
 end
 
 -- The relay's blacklist_add (the app blacklisted a yell's sender): a name on

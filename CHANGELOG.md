@@ -36,6 +36,12 @@ The zips, as the tool builds them:
 
 ## [Unreleased]
 
+## [0.6.3] - 2026-11-23
+
+### Fixed
+
+- A player blacklisted in game before the game has sent the character's whole blacklist (it does at zone-in) is on that character's blacklist in the app at once, so their yells hide and raise no keyword alert.
+
 ## [0.6.2] - 2026-11-23
 
 ### Fixed
@@ -312,7 +318,8 @@ The zips, as the tool builds them:
 - Case-insensitive pair codes: upper or lower case both work, and dashes or
   spaces copied from the phone are ignored.
 
-[Unreleased]: https://github.com/rshelnutt/vanatell/compare/v0.6.2...HEAD
+[Unreleased]: https://github.com/rshelnutt/vanatell/compare/v0.6.3...HEAD
+[0.6.3]: https://github.com/rshelnutt/vanatell/compare/v0.6.2...v0.6.3
 [0.6.2]: https://github.com/rshelnutt/vanatell/compare/v0.6.1...v0.6.2
 [0.6.1]: https://github.com/rshelnutt/vanatell/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/rshelnutt/vanatell/compare/v0.5.1...v0.6.0
