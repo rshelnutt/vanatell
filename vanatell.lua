@@ -11,8 +11,10 @@ in this folder for what you may and may not do with it.
 -- phone's send frames, the linkshells frame (which shell is equipped in
 -- slots 1 and 2, asked of the game with /lsmes and /ls2mes when it has not
 -- said), the yells it shares while the account has Yells on (yells.lua),
--- and the update check and //vt update (update.lua). All network work is
--- pumped from prerender and never blocks.
+-- the character's blacklist for the app's Yells tab (the game's list, sent
+-- whole, and /blacklist add for a name the app blacklists), and the update
+-- check and //vt update (update.lua). All network work is pumped from
+-- prerender and never blocks.
 _addon.name = 'vanatell'
 _addon.command = 'vt'
 _addon.version = '0.6.0'
@@ -184,16 +186,45 @@ local RELAY_URL = hooks.relay_url or 'wss://relay.vanatell.com'
 -- key is written.
 -- e2e_account: the account this PC knows has switched to encryption
 -- (rollbacks below encryption are refused for it).
+-- blacklist: the character's blacklist as the game last gave it whole and
+-- edited it since: 'list:' then its names, comma-separated ('list:' alone is
+-- an empty list; '' while the game has not given it). The game sends it as
+-- the character zones in, which at login is before the addon has reloaded,
+-- so it is kept here for the next load.
 ensure_data_dir()
 local claimed = claim_legacy()
 local settings = config.load(SETTINGS_PATH, {token = '', account_id = '', enabled = true, ls_slots = '', recover_key = '',
-                                             recover_key_id = '', e2e_account = ''})
-for _, key in ipairs({'ls_slots', 'recover_key', 'recover_key_id', 'e2e_account'}) do
+                                             recover_key_id = '', e2e_account = '', blacklist = ''})
+for _, key in ipairs({'ls_slots', 'recover_key', 'recover_key_id', 'e2e_account', 'blacklist'}) do
   if type(settings[key]) ~= 'string' then settings[key] = '' end
 end
 settings.url = nil
 -- The pairing moved had switched to encryption.
 if claimed and settings.e2e_account ~= '' and settings.e2e_account == settings.account_id then mark_e2e() end
+
+-- The character's blacklist: its setting read back here, the rest after
+-- the socket URL. One table, as the main chunk holds at most 200 locals.
+local black = {
+  WAIT = 10, -- seconds a /blacklist add the relay asked for waits for the game's add before it counts as not made
+}
+
+-- A character name as the game writes one: 3 to 15 letters.
+function black.is_name(v)
+  return type(v) == 'string' and #v >= 3 and #v <= 15 and v:find('^[A-Za-z]+$') ~= nil
+end
+
+-- The blacklist setting -> its names, or nil when it holds no list.
+function black.kept(text)
+  local rest = type(text) == 'string' and text:match('^list:(.*)$')
+  if not rest then return nil end
+  local names = {}
+  if rest == '' then return names end
+  for name in (rest .. ','):gmatch('([^,]*),') do
+    if not black.is_name(name) or #names >= yells.BLACKLIST_MAX then return nil end
+    names[#names + 1] = name
+  end
+  return names
+end
 
 -- state: unpaired | disabled | waiting | connecting | open | unauthorized | stopped
 local app = {
@@ -233,6 +264,11 @@ local app = {
   opened_at = nil, last_rx = nil, last_ping = nil,
   world = nil,         -- the character's world, as the last socket URL named it
   yells_on = false,    -- this socket shares yells: the relay's hello or yells frame said so; false from every close
+  blacklist = {        -- the character's blacklist (yells.lua reads the game's packets)
+    names = black.kept(settings.blacklist), -- the list as the game last gave it whole, kept up to date by its edits; nil while not known
+    building = nil,    -- the names of a list the game is sending in parts, from its first part until its last
+    waiting = {},      -- lowercase name -> {name =, deadline =}: a /blacklist add typed for the relay, until the game's add
+  },
   ls = {               -- linkshell detection
     equips = {},       -- 'bag:slot' -> 1 or 2, from 0x0E0 packets, /lsmes replies and the saved settings
     said = {},         -- slot number -> true: the game said since load or login what is in it
@@ -869,7 +905,104 @@ local function socket_url()
   end
   local info = windower.ffxi.get_info and windower.ffxi.get_info()
   app.world = yells.world_name(type(info) == 'table' and info.server or nil)
-  return url .. '&yells=1' .. (app.world and ('&world=' .. app.world) or '')
+  return url .. '&blacklist=1&yells=1' .. (app.world and ('&world=' .. app.world) or '')
+end
+
+-- The blacklist frame, the character's whole list, to the relay while the
+-- socket is open (after the hello, while the list is known).
+function black.send()
+  local names = app.blacklist.names
+  if not (names and app.state == 'open' and app.client) then return end
+  local quoted = {}
+  for i, name in ipairs(names) do quoted[i] = json.encode(name) end
+  app.client:send_text('{"type":"blacklist","names":[' .. table.concat(quoted, ',') .. ']}')
+end
+
+-- What came of the relay's blacklist_add for `name`, while the socket is open.
+function black.send_result(name, ok, reason)
+  if not (app.state == 'open' and app.client) then return end
+  app.client:send_text(encode_fields{{'type', 'blacklist_add_result'}, {'name', name}, {'ok', ok}, {'reason', reason}})
+end
+
+-- A /blacklist add the relay asked for, answered: its name as the relay gave it.
+function black.answer(key, ok)
+  local ask = app.blacklist.waiting[key]
+  if not ask then return end
+  app.blacklist.waiting[key] = nil
+  black.send_result(ask.name, ok)
+end
+
+-- The list now: kept in the settings and sent whole when it changed.
+function black.set(names)
+  app.blacklist.names = names
+  local text = 'list:' .. table.concat(names, ',')
+  if settings.blacklist == text then return end
+  settings.blacklist = text
+  save()
+  black.send()
+end
+
+-- 0x041, one part of the game's list: the first part starts it again, the
+-- last makes it the list. A part with no first part before it since this
+-- load is not a list. A name typed for the relay that the list now holds is
+-- answered.
+function black.on_part(data)
+  local part = yells.parse_blacklist(data)
+  if not part then return end
+  local bl = app.blacklist
+  if part.first then bl.building = {} end
+  if not bl.building then return end
+  for _, name in ipairs(part.names) do
+    if #bl.building < yells.BLACKLIST_MAX then bl.building[#bl.building + 1] = name end
+  end
+  if not part.last then return end
+  local names = bl.building
+  bl.building = nil
+  black.set(names)
+  for _, name in ipairs(names) do black.answer(name:lower(), true) end
+end
+
+-- 0x042, a name added to the game's list or removed from it: the list
+-- changes, when it is known, and the add answers the relay's ask for it.
+function black.on_edit(data)
+  local edit = yells.parse_blacklist_edit(data)
+  if not edit then return end
+  local bl, key = app.blacklist, edit.name:lower()
+  if bl.names then
+    local names, found = {}, false
+    for _, name in ipairs(bl.names) do
+      if name:lower() == key then found = true end
+      if edit.add or name:lower() ~= key then names[#names + 1] = name end
+    end
+    if edit.add and not found and #names < yells.BLACKLIST_MAX then names[#names + 1] = edit.name end
+    black.set(names)
+  end
+  if edit.add then black.answer(key, true) end
+end
+
+-- The relay's blacklist_add (the app blacklisted a yell's sender): a name on
+-- the list already is ok at once, and a list that holds BLACKLIST_MAX names
+-- is full; neither types anything. Otherwise /blacklist add, and the game's
+-- add (0x042) answers it. A name that is no name is not typed.
+function black.on_add(frame)
+  local name = frame.name
+  if not black.is_name(name) then return end
+  local bl, key = app.blacklist, name:lower()
+  if bl.names then
+    for _, listed in ipairs(bl.names) do
+      if listed:lower() == key then return black.send_result(name, true) end
+    end
+    if #bl.names >= yells.BLACKLIST_MAX then return black.send_result(name, false, 'full') end
+  end
+  bl.waiting[key] = {name = name, deadline = now() + black.WAIT}
+  windower.send_command('input /blacklist add ' .. name)
+end
+
+-- A /blacklist add the game has not made in black.WAIT is answered not ok.
+function black.pump(t)
+  for key, ask in pairs(app.blacklist.waiting) do
+    if t >= ask.deadline then black.answer(key, false) end
+  end
 end
 
 local function encryption_text()
@@ -1780,6 +1913,8 @@ local function on_hello(client, frame)
   -- The new socket gets the slots as the game has said them, then a read.
   offer_said(t)
   check_linkshells(t)
+  -- Then the character's blacklist, when it is known.
+  black.send()
 end
 
 local function on_message(client, text)
@@ -1803,6 +1938,8 @@ local function on_message(client, text)
   elseif frame.type == 'yells' and (frame.on == 0 or frame.on == 1) then
     -- Yells turned on or off for the account: sharing starts or stops at once.
     app.yells_on = frame.on == 1
+  elseif frame.type == 'blacklist_add' then
+    black.on_add(frame)
   end
 end
 
@@ -2161,6 +2298,7 @@ windower.register_event('prerender', function()
       app.last_ping = t
     end
   end
+  black.pump(t)
   local ls, read = app.ls, false
   pump_lookup(t)
   -- An event's read, or the periodic one while no event read is pending.
@@ -2258,6 +2396,11 @@ windower.register_event('incoming chunk', function(id, data)
     finish_lookup(now(), 'cancelled')
   elseif id == 0x01D then
     check_linkshells_in('inventory', LS_INVENTORY_SETTLE)
+  elseif id == yells.BLACKLIST_LIST then
+    -- A copy of a chunk the game sent again is the same part.
+    if not repeated(id, data) then black.on_part(data) end
+  elseif id == yells.BLACKLIST_EDIT then
+    if not repeated(id, data) then black.on_edit(data) end
   end
 end)
 
@@ -2275,6 +2418,7 @@ end)
 -- Another character may log in next, with other shells in other bag slots.
 windower.register_event('logout', function()
   finish_lookup(now(), 'cancelled')
+  app.blacklist.building = nil
   local ls = app.ls
   ls.equips, ls.current, ls.loaded, ls.read, ls.equips_for = {}, nil, {}, {}, nil
   ls.said, ls.known, ls.found, ls.looked, ls.unnamed_from, ls.named = {}, false, nil, nil, nil, {}
